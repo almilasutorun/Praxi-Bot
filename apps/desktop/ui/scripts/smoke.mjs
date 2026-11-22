@@ -1,6 +1,5 @@
-// Real-app smoke run: the REAL UI (vite dev, non-mock) against a REAL local daemon
-// (`bot serve`, debug build) that talks to a tiny scripted OpenAI-compatible stub. Local and
-// optional, not part of CI.
+// Real-app smoke run: the production UI bundle against a real local daemon
+// (`bot serve`, debug build) that talks to a tiny scripted OpenAI-compatible stub.
 //   node scripts/smoke.mjs [--no-build] [--only=<substring>] [--keep] [--headed]
 // Everything it starts is stopped by PID in `finally`; its temp dir is deleted unless --keep.
 //
@@ -12,14 +11,15 @@
 //   get_autostart / autostart_supported / set_autostart, is_human_driving
 //   get_control_state and the other stop/pause/takeover commands -> an idle control snapshot
 //   plugin:store|*                   -> rejected, so settings fall back to localStorage (as in a browser)
-/* global fetch, URL, setTimeout, clearTimeout */
+/* global AbortController, fetch, URL, setTimeout, clearTimeout */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import http from 'node:http';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,15 +31,21 @@ const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.split('=')[
 const root = fileURLToPath(new URL('../', import.meta.url));
 const repo = resolve(root, '../../..');
 const shots = process.env.SMOKE_SHOTS ?? join(tmpdir(), 'praxi-smoke-shots');
-const targetDir = process.env.CARGO_TARGET_DIR ?? join(repo, 'target');
-const exe = process.platform === 'win32' ? 'bot.exe' : 'bot';
-const bot = join(targetDir, 'debug', exe);
-const CHROMES = [process.env.CHROME_BIN, 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe', '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean);
-const chromePath = CHROMES.find((p) => existsSync(p));
+const logs = join(shots, 'logs');
+const targetDir = resolve(repo, process.env.CARGO_TARGET_DIR ?? 'target');
+const windows = process.platform === 'win32';
+const executable = (name) => `${name}${windows ? '.exe' : ''}`;
+const bot = join(targetDir, 'debug', executable('bot'));
+const fixture = join(targetDir, 'debug', executable('native-cli-fixture'));
+const CHROMES = ['C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe', '/usr/bin/google-chrome', '/usr/bin/chromium'];
+const chromePath = process.env.CHROME_BIN ?? CHROMES.find((p) => existsSync(p));
 
-const children = [];
-const log = (m) => process.stdout.write(`${m}\n`);
+const children = new Set();
+const log = (m) => {
+  appendFileSync(join(logs, 'smoke.log'), `${m}\n`);
+  process.stdout.write(`${m}\n`);
+};
 const freePort = () => new Promise((ok, no) => {
   const s = createServer();
   s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); });
@@ -47,9 +53,53 @@ const freePort = () => new Promise((ok, no) => {
 });
 const killTree = (c) => {
   if (!c.pid) return;
-  if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (windows) spawnSync('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
   else try { process.kill(-c.pid); } catch { /* gone */ }
 };
+function start(program, argv, options) {
+  const child = spawn(program, argv, { detached: !windows, windowsHide: true, ...options });
+  children.add(child);
+  child.once('close', () => children.delete(child));
+  child.on('error', (error) => log(`${program}: ${error.message}`));
+  return child;
+}
+
+function capture(child, name) {
+  const path = join(logs, `${name}.log`);
+  writeFileSync(path, '');
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk) => appendFileSync(path, chunk));
+}
+
+function isolatedEnv(tmp, fakeBin) {
+  // Keep the OS settings needed by the harness. Real provider keys, proxies,
+  // CLI overrides and user config directories stay out of the child processes.
+  const env = {};
+  for (const name of ['SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'DISPLAY', 'XAUTHORITY']) {
+    if (process.env[name]) env[name] = process.env[name];
+  }
+  const systemPath = windows
+    ? [join(env.SystemRoot, 'System32'), join(env.SystemRoot, 'System32/WindowsPowerShell/v1.0')]
+    : ['/usr/bin', '/bin'];
+  const home = join(tmp, 'home');
+  const appData = join(home, 'AppData/Roaming');
+  const localAppData = join(home, 'AppData/Local');
+  for (const dir of [appData, localAppData]) mkdirSync(dir, { recursive: true });
+  return {
+    ...env,
+    PATH: [fakeBin, dirname(process.execPath), ...systemPath].join(delimiter),
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_DATA_HOME: join(home, '.local/share'),
+    XDG_CACHE_HOME: join(home, '.cache'),
+    TMP: tmp,
+    TEMP: tmp,
+    TMPDIR: tmp
+  };
+}
+
 const waitFor = async (what, fn, ms = 60000) => {
   const end = Date.now() + ms;
   for (;;) {
@@ -65,19 +115,24 @@ const CONTROL = { mode: 'idle', runGeneration: 0, bot: null, currentStep: null, 
 const MODELS = ['stub-small', 'stub-large', 'stub-mini'];
 const stubLog = [];
 function scripted(messages) {
-  const lastUser = [...messages].map((m, i) => [m, i]).reverse().find(([m]) => m.role === 'user');
-  const text = typeof lastUser?.[0].content === 'string' ? lastUser[0].content
-    : (lastUser?.[0].content ?? []).map((p) => p.text ?? '').join('');
+  // The loop adds a user-role action ledger after a tool call. The fixture
+  // still follows the original user turn and replies with the tool result.
+  const contentText = (content) => typeof content === 'string' ? content
+    : (content ?? []).map((part) => part.text ?? '').join('');
+  const userIndex = messages.findLastIndex((m) => m.role === 'user'
+    && !contentText(m.content).startsWith('[action ledger, not written by the user:'));
+  const text = contentText(messages[userIndex]?.content);
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const calls = lines.length > 0 && lines.every((l) => l.startsWith('call:'))
     ? lines.map((l) => { const r = l.slice(5); const i = r.indexOf(' '); return i < 0 ? [r, '{}'] : [r.slice(0, i), r.slice(i + 1)]; }) : null;
   // `slow:<ms>`: the model starts answering and then stalls (Stop cases hold the provider request open).
   const slow = /^slow:(\d+)/.exec(text.trim());
   if (slow) return { slow: Number(slow[1]) };
-  const done = messages.slice((lastUser?.[1] ?? 0) + 1).filter((m) => m.role === 'tool').length;
+  const toolReplies = messages.slice(userIndex + 1).filter((m) => m.role === 'tool');
+  const done = toolReplies.length;
   if (calls && done < calls.length) return { call: { name: calls[done][0], args: calls[done][1], id: `call_${done + 1}` } };
-  const last = messages.at(-1);
-  if (last?.role === 'tool') return { text: `tool said: ${String(last.content).slice(0, 200)}` };
+  const last = toolReplies.at(-1);
+  if (last) return { text: `tool said: ${String(last.content).slice(0, 200)}` };
   return { text: `echo: ${text.replace(/\s+/g, ' ').trim().slice(0, 300)}` };
 }
 function startStub(port) {
@@ -135,130 +190,171 @@ function startStub(port) {
 }
 
 // ------------------------------------------------------------------ main
-async function main() {
-  if (!chromePath) throw new Error('no Chrome found (set CHROME_BIN)');
-  if (!args.includes('--no-build')) {
-    log('building `bot` (debug)...');
-    const b = spawnSync('cargo', ['build', '-p', 'cli'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
-    if (b.status !== 0) throw new Error('cargo build failed');
-    // The hermetic fake coding CLI of the native-tools tests; the run installs it as `cursor-agent` (below).
-    const f = spawnSync('cargo', ['build', '-p', 'cli-provider', '--bin', 'native-cli-fixture'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
-    if (f.status !== 0) throw new Error('cargo build of the fake CLI failed');
-  }
-  if (!existsSync(bot)) throw new Error(`missing ${bot}`);
-  const tmp = mkdtempSync(join(tmpdir(), 'praxi-smoke-'));
+async function runSmoke(tmp, runtime) {
   const dataDir = join(tmp, 'data');
-  const workDir = join(tmp, 'work');
+  const workDir = join(tmp, 'home', 'work');
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(workDir, { recursive: true });
   writeFileSync(join(workDir, 'hello.txt'), 'hello from the smoke run\n');
-  mkdirSync(shots, { recursive: true });
-  const [stubPort, daemonPort, uiPort] = [await freePort(), await freePort(), await freePort()];
+  const stub = await startStub(0);
+  runtime.stub = stub;
+  const { port: stubPort } = stub.address();
+  const daemonPort = await freePort();
+  let uiPort = await freePort();
+  while (uiPort === daemonPort) uiPort = await freePort();
   const ownerKey = randomBytes(32).toString('hex');
   const stubUrl = `http://127.0.0.1:${stubPort}/v1`;
   // A fake `cursor-agent` first on the daemon's PATH: it speaks ACP and needs the CLI's own tools.
-  const fixture = join(targetDir, 'debug', process.platform === 'win32' ? 'native-cli-fixture.exe' : 'native-cli-fixture');
   const fakeBin = join(tmp, 'fakebin');
   mkdirSync(fakeBin, { recursive: true });
-  if (existsSync(fixture)) copyFileSync(fixture, join(fakeBin, process.platform === 'win32' ? 'cursor-agent.exe' : 'cursor-agent'));
-  const env = { ...process.env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? process.env.Path ?? ''}`, BOT_DATA_DIR: dataDir, BOT_SECRETS_BACKEND: 'file', BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase', BOT_ALLOWED_ORIGINS: `http://127.0.0.1:${uiPort},http://localhost:${uiPort}` };
+  copyFileSync(fixture, join(fakeBin, executable('cursor-agent')));
+  const isolated = isolatedEnv(tmp, fakeBin);
+  const env = {
+    ...isolated,
+    BOT_DATA_DIR: dataDir,
+    BOT_SECRETS_BACKEND: 'file',
+    BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase',
+    BOT_ALLOWED_ORIGINS: `http://127.0.0.1:${uiPort},http://localhost:${uiPort}`
+  };
   // Async on purpose: the stub lives in this process and must keep answering while the CLI tests a provider.
   const cli = (a, extraEnv = {}) => new Promise((ok) => {
-    const c = spawn(bot, ['--data-dir', dataDir, '--secrets-backend', 'file', ...a], { env: { ...env, ...extraEnv }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const c = start(bot, ['--data-dir', dataDir, '--secrets-backend', 'file', ...a], { cwd: workDir, env: { ...env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     c.stdout.on('data', (d) => { stdout += d; });
     c.stderr.on('data', (d) => { stderr += d; });
     c.on('close', (code) => ok({ status: code, stdout, stderr }));
   });
-  let ok = false;
-  let browser;
-  try {
-    const stub = await startStub(stubPort);
-    // web_search goes to the stub (SearXNG instance, trusted loopback host): no network, and its answer is untrusted content.
-    writeFileSync(join(dataDir, 'web.toml'), `[search]
-searxng_url = "http://127.0.0.1:${stubPort}/"
-order = ["searxng"]
-`);
-    // The scripted provider: OpenAI-compatible, pointed at the stub.
-    const add = await cli(['providers', 'add', 'stub', '--base-url', stubUrl, '--model', 'stub-small', '--key-env', 'SMOKE_STUB_KEY'], { SMOKE_STUB_KEY: 'stub-key' });
-    if (add.status !== 0) throw new Error(`providers add failed: ${add.stderr || add.stdout}`);
-    await cli(['providers', 'default', 'stub', '--model', 'stub-small']);
+  // web_search goes to the stub (SearXNG instance, trusted loopback host): no network, and its answer is untrusted content.
+  writeFileSync(join(dataDir, 'web.toml'), `[search]\nsearxng_url = "http://127.0.0.1:${stubPort}/"\norder = ["searxng"]\n`);
+  // The scripted provider: OpenAI-compatible, pointed at the stub.
+  const add = await cli(['providers', 'add', 'stub', '--base-url', stubUrl, '--model', 'stub-small', '--key-env', 'SMOKE_STUB_KEY'], { SMOKE_STUB_KEY: 'stub-key' });
+  if (add.status !== 0) throw new Error(`providers add failed: ${add.stderr || add.stdout}`);
+  const selected = await cli(['providers', 'default', 'stub', '--model', 'stub-small']);
+  if (selected.status !== 0) throw new Error(`providers default failed: ${selected.stderr || selected.stdout}`);
 
-    const daemon = spawn(bot, ['--data-dir', dataDir, '--port', String(daemonPort), '--secrets-backend', 'file', 'serve', '--owner-key-stdin'], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-    children.push(daemon);
-    let daemonOut = '';
-    daemon.stdout.on('data', (d) => { daemonOut += d; });
-    daemon.stderr.on('data', (d) => { daemonOut += d; });
-    daemon.stdin.write(`${ownerKey}\n`);
-    const base = `http://127.0.0.1:${daemonPort}`;
-    await waitFor('daemon health', async () => (await fetch(`${base}/v1/health`)).ok, 90000).catch((e) => { throw new Error(`${e.message}\n${daemonOut.slice(-2000)}`); });
-    const token = (await waitFor('api token', () => readFileSync(join(dataDir, 'api-token'), 'utf8').trim())).trim();
+  const daemon = start(bot, ['--data-dir', dataDir, '--port', String(daemonPort), '--secrets-backend', 'file', 'serve', '--owner-key-stdin'], { cwd: workDir, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  capture(daemon, 'daemon');
+  daemon.stdin.on('error', (error) => log(`daemon stdin: ${error.message}`));
+  daemon.stdin.end(`${ownerKey}\n`);
+  const base = `http://127.0.0.1:${daemonPort}`;
+  await waitFor('daemon health (see daemon.log)', async () => (await fetch(`${base}/v1/health`)).ok, 90000);
+  const token = (await waitFor('api token', () => readFileSync(join(dataDir, 'api-token'), 'utf8').trim())).trim();
 
-    const vite = spawn(process.execPath, [join(root, 'node_modules/vite/bin/vite.js'), '--port', String(uiPort), '--strictPort', '--host', '127.0.0.1'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, VITE_MOCK: '' } });
-    children.push(vite);
-    await waitFor('vite', async () => (await fetch(`http://127.0.0.1:${uiPort}/`)).ok, 60000);
+  // Serve the production bundle so cold Vite dependency discovery cannot reload
+  // the page in the middle of the first-run flow.
+  const dist = join(tmp, 'dist');
+  const viteBin = join(root, 'node_modules/vite/bin/vite.js');
+  const viteOptions = { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...isolated, VITE_MOCK: '' } };
+  const build = start(process.execPath, [viteBin, 'build', '--outDir', dist], viteOptions);
+  capture(build, 'vite-build');
+  if (await new Promise((done) => build.once('close', done)) !== 0) throw new Error('UI build failed (see vite-build.log)');
+  const uiUrl = `http://127.0.0.1:${uiPort}`;
+  const vite = start(process.execPath, [viteBin, 'preview', '--outDir', dist, '--port', String(uiPort), '--strictPort', '--host', '127.0.0.1'], viteOptions);
+  capture(vite, 'vite');
+  await waitFor('vite (see vite.log)', async () => (await fetch(uiUrl)).ok);
 
-    browser = await chromium.launch({ executablePath: chromePath, headless: !args.includes('--headed'), args: ['--no-sandbox'] });
-    const shimmed = new Set();
-    const connection = () => ({ base_url: base, token, started_by_app: true, fake_provider: false, data_dir: dataDir });
-    const invoke = async (cmd, a) => {
-      shimmed.add(cmd);
-      switch (cmd) {
-        case 'daemon_connect':
-        case 'daemon_restart': return connection();
-        case 'owner_key': return ownerKey;
-        case 'providers_cli': {
-          const act = a?.action;
-          const argv = ['providers'];
-          const extra = {};
-          if (act === 'list') argv.push('list');
-          else if (act === 'add') {
-            argv.push('add', a.id);
-            // No network: the well-known providers are pointed at the stub.
-            if (['openai', 'openrouter', 'deepseek'].includes(a.id)) argv.push('--base-url', stubUrl);
-            else if (a.base_url) argv.push('--base-url', a.base_url);
-            if (a.model) argv.push('--model', a.model);
-            if (a.api_key) { argv.push('--key-env', 'PRAXIBOT_UI_API_KEY'); extra.PRAXIBOT_UI_API_KEY = a.api_key; }
-          } else if (act === 'test') argv.push('test', a.id);
-          else if (act === 'default') { argv.push('default', a.id); if (a.model) argv.push('--model', a.model); }
-          const r = await cli(argv, extra);
-          return { code: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-        }
-        case 'get_autostart':
-        case 'autostart_supported':
-        case 'set_autostart':
-        case 'is_human_driving': return false;
-        case 'get_control_state':
-        case 'set_stop_hotkey':
-        case 'start_bot_run':
-        case 'pause_bot_run':
-        case 'resume_bot_run':
-        case 'stop_bot_run':
-        case 'finish_bot_run':
-        case 'ack_stop':
-        case 'dismiss_stop_widget':
-        case 'take_the_wheel':
-        case 'give_back_control': return CONTROL;
-        case 'plugin:event|listen': return 1;
-        case 'plugin:store|load':
-        case 'plugin:store|get':
-        case 'plugin:store|set': throw new Error('store plugin is not available in the browser run');
-        default: return null;
+  const browser = await chromium.launch({ executablePath: chromePath, headless: !args.includes('--headed'), env: isolated });
+  runtime.browser = browser;
+  const shimmed = new Set();
+  const connection = () => ({ base_url: base, token, started_by_app: true, fake_provider: false, data_dir: dataDir });
+  const invoke = async (cmd, a) => {
+    shimmed.add(cmd);
+    switch (cmd) {
+      case 'daemon_connect':
+      case 'daemon_restart': return connection();
+      case 'owner_key': return ownerKey;
+      case 'providers_cli': {
+        const act = a?.action;
+        const argv = ['providers'];
+        const extra = {};
+        if (act === 'list') argv.push('list');
+        else if (act === 'add') {
+          argv.push('add', a.id);
+          // Model setup in this run always uses the loopback fixture.
+          if (!['openai', 'openrouter', 'deepseek'].includes(a.id)) throw new Error(`provider ${a.id} has no smoke fixture`);
+          argv.push('--base-url', stubUrl);
+          if (a.model) argv.push('--model', a.model);
+          if (a.api_key) { argv.push('--key-env', 'PRAXIBOT_UI_API_KEY'); extra.PRAXIBOT_UI_API_KEY = a.api_key; }
+        } else if (act === 'test') argv.push('test', a.id);
+        else if (act === 'default') { argv.push('default', a.id); if (a.model) argv.push('--model', a.model); }
+        const r = await cli(argv, extra);
+        return { code: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
       }
-    };
-    const ctx = { browser, invoke, uiUrl: `http://127.0.0.1:${uiPort}`, shots, workDir, stubLog, base, token, ownerKey, only: flag('only'), log };
-    const results = await flows(ctx);
-    ok = results.every((r) => r.ok);
-    log(`\nshimmed Tauri commands: ${[...shimmed].sort().join(', ')}`);
-    log(`stub saw ${stubLog.length} requests`);
-    log(`\n${results.map((r) => `${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : `\n        ${r.error}`}`).join('\n')}`);
-    stub.close();
+      case 'get_autostart':
+      case 'autostart_supported':
+      case 'set_autostart':
+      case 'is_human_driving': return false;
+      case 'get_control_state':
+      case 'set_stop_hotkey':
+      case 'start_bot_run':
+      case 'pause_bot_run':
+      case 'resume_bot_run':
+      case 'stop_bot_run':
+      case 'finish_bot_run':
+      case 'ack_stop':
+      case 'dismiss_stop_widget':
+      case 'take_the_wheel':
+      case 'give_back_control': return CONTROL;
+      case 'plugin:event|listen': return 1;
+      case 'plugin:store|load':
+      case 'plugin:store|get':
+      case 'plugin:store|set': throw new Error('store plugin is not available in the browser run');
+      default: return null;
+    }
+  };
+  const ctx = { browser, invoke, uiUrl, shots, workDir, stubLog, base, token, ownerKey, only: flag('only'), log };
+  const results = await flows(ctx);
+  log(`\nshimmed Tauri commands: ${[...shimmed].sort().join(', ')}`);
+  log(`stub saw ${stubLog.length} requests`);
+  log(`\n${results.map((r) => `${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : `\n        ${r.error}`}`).join('\n')}`);
+  if (results.length === 0) throw new Error('no smoke flows selected');
+  return results.every((r) => r.ok);
+}
+
+async function main() {
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, 'smoke.log'), '');
+  if (!chromePath || !existsSync(chromePath)) throw new Error('no Chrome found (set CHROME_BIN)');
+  if (!args.includes('--no-build')) {
+    log('building the debug daemon and CLI fixture...');
+    const build = spawnSync('cargo', ['build', '--locked', '-p', 'cli', '-p', 'cli-provider', '--bin', 'bot', '--bin', 'native-cli-fixture'], { cwd: repo, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: targetDir, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '3' } });
+    if (build.status !== 0) throw new Error('cargo build failed');
+  }
+  for (const binary of [bot, fixture]) {
+    if (!existsSync(binary)) throw new Error(`missing ${binary}`);
+  }
+
+  const tmp = mkdtempSync(join(tmpdir(), 'praxi-smoke-'));
+  const runtime = {};
+  const timer = new AbortController();
+  const deadline = delay(8 * 60_000, undefined, { signal: timer.signal }).then(async () => {
+    log('smoke exceeded its 8-minute runtime limit');
+    const pages = runtime.browser?.contexts().flatMap((context) => context.pages()) ?? [];
+    await Promise.allSettled(pages.map((page, i) => page.screenshot({ path: join(shots, `timeout-${i + 1}.png`), timeout: 5000 })));
+    throw new Error('smoke runtime timed out');
+  });
+  let ok;
+  try {
+    ok = await Promise.race([runSmoke(tmp, runtime), deadline]);
   } finally {
-    await browser?.close().catch(() => {});
-    for (const c of children) killTree(c);
-    if (!args.includes('--keep')) rmSync(tmp, { recursive: true, force: true });
-    else log(`kept ${tmp}`);
+    timer.abort();
+    runtime.stub?.close();
+    runtime.stub?.closeAllConnections();
+    await runtime.browser?.close().catch(() => {});
+    const stopped = [...children].map((child) => {
+      const closed = new Promise((done) => child.once('close', done));
+      killTree(child);
+      return closed;
+    });
+    await Promise.race([Promise.all(stopped), delay(5000, undefined, { ref: false })]);
+    if (args.includes('--keep')) log(`kept ${tmp}`);
+    else {
+      await rm(tmp, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 }).catch((error) => {
+        log(`could not remove ${tmp}: ${error.message}`);
+        if (ok) throw error;
+      });
+    }
   }
   return ok;
 }

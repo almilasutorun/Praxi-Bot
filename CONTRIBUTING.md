@@ -158,21 +158,21 @@ a violation (a name, a role, a heading level). If you cannot fix it now, add one
 parking lot. axe-core is MPL-2.0 and used unmodified as a dev dependency only; it is not shipped.
 Use `--only=<substring>` (for example `--only=settings-ai`) to run a few cases while iterating.
 
-**The real-app smoke run** drives the real UI (vite dev server, not mock mode) against a real local
+**The real-app smoke run** drives the production UI bundle against a real local
 daemon (a debug `bot serve`) that talks to a tiny scripted OpenAI-compatible stub, using headless
 Chrome (set `CHROME_BIN` if it is not found):
 
 ```sh
-pnpm --dir apps/desktop/ui smoke                 # builds `bot`, starts everything, prints PASS/FAIL per step
-pnpm --dir apps/desktop/ui smoke -- --no-build   # reuse an existing debug build
-pnpm --dir apps/desktop/ui smoke -- --only=Apps  # steps whose name contains "Apps"
+pnpm --dir apps/desktop/ui smoke             # builds the daemon and CLI fixture, then runs the flows
+pnpm --dir apps/desktop/ui smoke --no-build  # reuse both debug binaries
 ```
 
 It covers: app start, creating bots, chatting, the model picker, tool calls and approval cards,
 the bot panel, `@mention` answers, Settings, the Apps modal, the add-server wizard, the
-human-takeover latch, the production origins and the owner-route checks. It is local and optional
-(not part of CI) and can be flaky on slow machines; `SMOKE_SHOTS` sets where screenshots go and
-`CARGO_TARGET_DIR` which build to use.
+human-takeover latch, the production origins and the owner-route checks. `SMOKE_SHOTS` selects an
+output directory for screenshots and logs, and `CARGO_TARGET_DIR` selects the Rust build directory.
+See the [maintainer guide](docs/contributing/MAINTAINING.md#real-app-smoke) for CI triggers and
+failure artifacts.
 
 ## Conventions that are enforced
 

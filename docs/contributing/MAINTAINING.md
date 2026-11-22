@@ -30,18 +30,37 @@ routine. It is written for a single maintainer; nothing here needs a team.
 ## What decides "green"
 
 Branch protection should require exactly one check: **`ci-result`**. It always runs and succeeds when
-every needed job succeeded or was skipped on purpose, so a documentation-only (or UI-only) pull
-request is not blocked waiting for jobs that never start. Inside it:
+every needed job succeeded or was skipped on purpose, so a documentation-only pull
+request can skip jobs outside its scope.
 
 | Job | Runs when |
 | --- | --- |
 | `Docs links` | always (relative Markdown links resolve) |
 | `Build & Test (windows-latest / ubuntu-latest)`, `Browser integration`, `License Check` | anything other than docs, repository metadata and `apps/desktop/ui/` sources changed (every push to `main` runs them all) |
 | `UI Lint & Typecheck` (includes "generated API types are up to date") | UI files, shared UI packages, `docs/api/openapi.json` or `ci.yml` changed |
+| `Real-app smoke (windows-latest / ubuntu-latest)` | Desktop app, CLI daemon, shared crates or UI packages, provider or skill assets, relevant build inputs, or `ci.yml` changed. Also runs on pushes to `main`. |
 
 `docs/api/openapi.json` staleness is caught by the `openapi_snapshot` test inside Build & Test; the
 failure message names the command to regenerate it. `schema.d.ts` staleness is caught by the UI job
 with its own message. Neither needs your attention beyond telling the author to regenerate.
+
+## Real-app smoke
+
+The two smoke jobs drive the desktop UI in pinned headless Chrome against a real debug `bot serve`
+process. The harness uses fresh temporary state, dummy credentials, a scripted loopback provider
+and search server, and a fake coding CLI. It shims the native Tauri commands. CI builds only the
+daemon and CLI fixture, caches Rust and pnpm dependencies, and cancels superseded PR runs.
+
+Each run has an eight-minute harness deadline. When a job fails, download `desktop-smoke-windows-latest`
+or `desktop-smoke-ubuntu-latest` from the workflow run. The artifact contains any screenshots taken
+before failure and the available build, harness, daemon and Vite logs. A failed smoke job fails
+`ci-result`. A skipped smoke job satisfies it.
+
+To reproduce locally, run `pnpm install --frozen-lockfile`, set `CHROME_BIN` if Chrome is outside
+its usual install location, then run `pnpm --dir apps/desktop/ui smoke`. Set `SMOKE_SHOTS` to pick an
+output directory. Pass `--no-build` to reuse a previously built debug daemon and CLI fixture, or
+`--headed` to watch Chrome. `--only=<text>` can select a flow by name, but stateful flows require
+the preceding setup steps. See the [desktop UI README](../../apps/desktop/ui/README.md#real-app-smoke-run).
 
 ## Saying no kindly
 

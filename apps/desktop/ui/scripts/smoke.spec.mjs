@@ -11,7 +11,11 @@ const EN = JSON.stringify({ language: 'en' });
 
 /** A browser context whose page believes it runs inside the Tauri app (see smoke.mjs for the shim). */
 async function newSession(ctx, { onboarded }) {
-  const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
+  await context.route('**/*', (route) => {
+    const origin = new URL(route.request().url()).origin;
+    return origin === ctx.uiUrl || origin === ctx.base ? route.continue() : route.abort();
+  });
   await context.exposeFunction('__smokeInvoke', (cmd, args) => ctx.invoke(cmd, args));
   await context.addInitScript(({ settings, fresh }) => {
     try { if (!window.localStorage.getItem('desktop_ui_settings')) window.localStorage.setItem('desktop_ui_settings', settings); } catch { /* storage unavailable */ }
@@ -36,9 +40,8 @@ async function newSession(ctx, { onboarded }) {
   const page = await context.newPage();
   const problems = [];
   const failed = [];
-  if (process.env.SMOKE_DEBUG) page.on("console", (m) => process.stdout.write(`[console.${m.type()}] ${m.text().slice(0, 1500)} @ ${m.location().url}:${m.location().lineNumber}${String.fromCharCode(10)}`));
-  if (process.env.SMOKE_DEBUG) page.on('requestfailed', (r) => process.stdout.write(`[requestfailed] ${r.url()} ${r.failure()?.errorText}
-`));
+  if (process.env.SMOKE_DEBUG) page.on('console', (m) => ctx.log(`[console.${m.type()}] ${m.text().slice(0, 1500)} @ ${m.location().url}:${m.location().lineNumber}`));
+  if (process.env.SMOKE_DEBUG) page.on('requestfailed', (r) => ctx.log(`[requestfailed] ${r.url()} ${r.failure()?.errorText}`));
   page.on('console', (m) => { if (m.type() === 'error' && !m.location().url.endsWith('/favicon.ico')) problems.push(`console: ${m.text().slice(0, 300)}`); });
   page.on('pageerror', (e) => problems.push(`pageerror: ${String(e).slice(0, 300)}`));
   page.on('response', (r) => { if (r.status() >= 400 && r.url().includes('/v1/')) failed.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
@@ -66,6 +69,7 @@ export async function flows(ctx) {
     n += 1;
     const slug = `${String(n).padStart(2, '0')}-${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`;
     const { page, problems, failed } = session;
+    ctx.log(`RUN  ${name}`);
     problems.length = 0;
     failed.length = 0;
     let error = null;
@@ -82,13 +86,14 @@ export async function flows(ctx) {
       if (failed.length > 0 && failed.every((f) => f.startsWith('404 ') && f.includes(' /v1/view/sessions/'))) real = real.filter((p) => !p.startsWith('console: Failed to load resource'));
       if (real.length) throw new Error(`browser problems: ${[...new Set(real)].join(' | ')} (failed requests: ${[...new Set(failed)].join(', ') || 'none'})`);
     } catch (e) {
-      error = String(e.message ?? e).split('\n')[0];
+      error = String(e.message ?? e);
     }
     if (error && process.env.SMOKE_DEBUG) {
       const dump = await page.evaluate(() => `${location.href} root=${document.getElementById("root")?.innerHTML.length} ${(window.__errs ?? []).join(" --- ")}`).catch((e) => String(e));
-      process.stdout.write(`[debug] ${dump.slice(0, 4000)}${String.fromCharCode(10)}`);
+      ctx.log(`[debug] ${dump.slice(0, 4000)}`);
     }
-    await page.screenshot({ path: join(ctx.shots, `${slug}.png`) }).catch(() => {});
+    await page.screenshot({ path: join(ctx.shots, `${slug}.png`), timeout: 5000 })
+      .catch((e) => ctx.log(`could not capture ${slug}.png: ${e.message}`));
     results.push({ name, ok: !error, error });
     ctx.log(`${error ? 'FAIL' : 'ok  '} ${name}${error ? `  - ${error}` : ''}`);
   };
@@ -249,9 +254,11 @@ export async function flows(ctx) {
   });
   await run(s, 'Apps modal opens at once and shows tiles', async (page) => {
     await page.getByTestId('open-apps').click();
-    await page.getByTestId('apps-grid').waitFor({ timeout: 4000 });
-    await page.keyboard.press('Escape');
+    // The modal opens before the daemon's catalog has loaded.
+    await page.getByRole('dialog', { name: 'Apps' }).waitFor({ timeout: 4000 });
+    await page.getByTestId('apps-grid').waitFor(T);
   });
+  if (await s.page.getByRole('dialog', { name: 'Apps' }).isVisible()) await s.page.keyboard.press('Escape');
   await run(s, 'add-server wizard opens and validates input without SSH', async (page) => {
     await page.getByTestId('computer-picker').click();
     await page.getByTestId('computer-add').click();
@@ -431,8 +438,12 @@ export async function flows(ctx) {
     const before = new Set((await runsNow()).map((r) => r.id));
     const pidFile = join(ctx.workDir, 'hold.pid');
     rmSync(pidFile, { force: true });
-    const command = `& '${process.execPath}' '${holdScript}' '${pidFile}'`;
+    const windows = process.platform === 'win32';
+    const quote = (path) => `'${path.replaceAll("'", windows ? "''" : "'\"'\"'")}'`;
+    const command = `${windows ? '&' : 'exec'} ${[process.execPath, holdScript, pidFile].map(quote).join(' ')}`;
     await sendLines(page, [`call:shell_run ${JSON.stringify({ command })}`, `call:shell_run ${JSON.stringify({ command: 'echo must-not-run' })}`]);
+    // Launching a program requires approval even at Full. Stop must kill it after it actually starts.
+    await cards(page).getByRole('button', { name: /^allow once$/i }).click();
     const pid = await until('hold process started', () => (existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0), 60000);
     await stopAndCheck(page, before);
     await until('hold process gone', () => !alive(pid), STOP_WITHIN);
