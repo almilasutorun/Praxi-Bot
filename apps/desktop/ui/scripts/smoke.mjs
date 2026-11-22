@@ -11,7 +11,7 @@
 //   get_autostart / autostart_supported / set_autostart, is_human_driving
 //   get_control_state and the other stop/pause/takeover commands -> an idle control snapshot
 //   plugin:store|*                   -> rejected, so settings fall back to localStorage (as in a browser)
-/* global AbortController, fetch, URL, setTimeout, clearTimeout */
+/* global AbortController, AbortSignal, fetch, URL, setTimeout, clearTimeout */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -79,7 +79,7 @@ function isolatedEnv(tmp, fakeBin) {
   // Keep the OS settings needed by the harness. Real provider keys, proxies,
   // CLI overrides and user config directories stay out of the child processes.
   const env = {};
-  for (const name of ['SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'DISPLAY', 'XAUTHORITY']) {
+  for (const name of ['SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_SESSION_TYPE']) {
     if (process.env[name]) env[name] = process.env[name];
   }
   const systemPath = windows
@@ -219,6 +219,7 @@ async function runSmoke(tmp, runtime) {
     BOT_DATA_DIR: dataDir,
     BOT_SECRETS_BACKEND: 'file',
     BOT_SECRETS_PASSPHRASE: 'smoke-passphrase-smoke-passphrase',
+    BOT_BROWSER_PATH: chromePath,
     BOT_ALLOWED_ORIGINS: `http://127.0.0.1:${uiPort},http://localhost:${uiPort}`
   };
   // Async on purpose: the stub lives in this process and must keep answering while the CLI tests a provider.
@@ -237,6 +238,8 @@ async function runSmoke(tmp, runtime) {
   if (add.status !== 0) throw new Error(`providers add failed: ${add.stderr || add.stdout}`);
   const selected = await cli(['providers', 'default', 'stub', '--model', 'stub-small']);
   if (selected.status !== 0) throw new Error(`providers default failed: ${selected.stderr || selected.stdout}`);
+  const tested = await cli(['providers', 'test', 'stub']);
+  if (tested.status !== 0) throw new Error(`loopback provider unreachable: ${tested.stderr || tested.stdout}`);
 
   const daemon = start(bot, ['--data-dir', dataDir, '--port', String(daemonPort), '--secrets-backend', 'file', 'serve', '--owner-key-stdin'], { cwd: workDir, env, stdio: ['pipe', 'pipe', 'pipe'] });
   capture(daemon, 'daemon');
@@ -245,6 +248,18 @@ async function runSmoke(tmp, runtime) {
   const base = `http://127.0.0.1:${daemonPort}`;
   await waitFor('daemon health (see daemon.log)', async () => (await fetch(`${base}/v1/health`)).ok, 90000);
   const token = (await waitFor('api token', () => readFileSync(join(dataDir, 'api-token'), 'utf8').trim())).trim();
+  // Health alone succeeds on a displayless daemon, but UI-created bots target
+  // this PC and never reach the provider without its local desktop backend.
+  const doctor = await fetch(`${base}/v1/doctor`, {
+    headers: { authorization: `Bearer ${token}`, 'x-praxi-owner-key': ownerKey },
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!doctor.ok) throw new Error(`desktop preflight returned HTTP ${doctor.status} (see daemon.log)`);
+  const desktop = (await doctor.json()).checks?.find((check) => check.id === 'desktop_automation');
+  if (desktop?.status !== 'ok') {
+    throw new Error(`local desktop unavailable: ${desktop?.detail ?? 'no backend'}; on Linux run under xvfb-run and dbus-run-session (see daemon.log)`);
+  }
+  log(`preflight: loopback provider reachable; desktop ${desktop.detail}`);
 
   // Serve the production bundle so cold Vite dependency discovery cannot reload
   // the page in the middle of the first-run flow.

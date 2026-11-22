@@ -50,6 +50,10 @@ The two smoke jobs drive the desktop UI in pinned headless Chrome against a real
 process. The harness uses fresh temporary state, dummy credentials, a scripted loopback provider
 and search server, and a fake coding CLI. It shims the native Tauri commands. CI builds only the
 daemon and CLI fixture, caches Rust and pnpm dependencies, and cancels superseded PR runs.
+Linux runs inside Xvfb with a private D-Bus session: UI-created bots target this PC and need a
+local desktop backend even for a text-only turn. The harness preserves the display authorization
+and session bus in its isolated child environment, checks the backend and loopback provider at
+startup, and stops at the first failed flow. Peer networking stays disabled; no paired PC is needed.
 
 Each run has an eight-minute harness deadline. When a job fails, download `desktop-smoke-windows-latest`
 or `desktop-smoke-ubuntu-latest` from the workflow run. The artifact contains any screenshots taken

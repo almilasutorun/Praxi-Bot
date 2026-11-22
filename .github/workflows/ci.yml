@@ -322,7 +322,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config libxcb1-dev
+          sudo apt-get install -y libdbus-1-dev pkg-config libxcb1-dev xvfb xauth dbus-x11 at-spi2-core
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -376,7 +376,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "SMOKE_SHOTS=$shots" >> $env:GITHUB_ENV
 
-      - name: Run real-app smoke
+      # Bots created by the UI target this PC. Without a local desktop backend,
+      # Linux refuses the run before contacting the loopback model. Xvfb supplies
+      # that desktop; a private bus keeps accessibility services off the host bus.
+      - name: Run real-app smoke (Linux virtual desktop)
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        env:
+          XDG_SESSION_TYPE: x11
+        run: xvfb-run -a -s "-screen 0 1280x800x24 -nolisten tcp" dbus-run-session -- pnpm --dir apps/desktop/ui smoke --no-build
+
+      - name: Run real-app smoke (Windows)
+        if: runner.os == 'Windows'
         timeout-minutes: 10
         run: pnpm --dir apps/desktop/ui smoke --no-build
 

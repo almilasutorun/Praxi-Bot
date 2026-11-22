@@ -42,6 +42,10 @@ exit code 1 on any failure. About 3 minutes after the first build.
 - Needs Chrome (`CHROME_BIN` to override) and a Rust toolchain. Builds `bot` and the fake coding CLI
   into `CARGO_TARGET_DIR` (default `target` at the repository root). `--no-build` reuses both binaries.
   `--only=<text>` filters steps. Include any steps that create state your selected step depends on.
+- Headless Linux needs `xvfb`, `xauth`, `dbus-x11` and `at-spi2-core`. Run
+  `xvfb-run -a -s "-screen 0 1280x800x24 -nolisten tcp" dbus-run-session -- pnpm --dir apps/desktop/ui smoke`.
+  The harness checks the local desktop backend and loopback provider before opening the UI,
+  then stops at the first failed flow with its screenshot and logs.
 - Starts and stops its own stub, daemon, Vite and Chrome processes. If Windows keeps an ACL-protected
   fixture file, the harness prints the temporary directory it retained.
 - Tauri commands are shimmed for the browser (list printed at the end). Screenshots and logs go to

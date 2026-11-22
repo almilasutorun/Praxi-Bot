@@ -106,6 +106,9 @@ export async function flows(ctx) {
       .catch((e) => ctx.log(`could not capture ${slug}.png: ${e.message}`));
     results.push({ name, ok: !error, error });
     ctx.log(`${error ? 'FAIL' : 'ok  '} ${name}${error ? `  - ${error}` : ''}`);
+    // Later flows share the bots/chats created above. Preserve the first
+    // screenshot and fail promptly instead of cascading into minutes of waits.
+    if (error) throw new Error(`${name}: ${error}`);
   };
   // Generous: the machine this runs on is often busy with builds, and a flow that is merely slow must not look broken.
   const T = { timeout: 30000 };
