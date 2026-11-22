@@ -696,6 +696,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bots/{id}/spend-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A bot's spending limits and what each period has used. */
+        get: operations["get_bot_spend_limits"];
+        /**
+         * Replace a bot's spending limits (owner only). Effective for the next model
+         *     call of every run of the bot, including scheduled and channel-triggered ones.
+         *     The change is audited as `bot.spend_limits_changed`.
+         */
+        put: operations["put_bot_spend_limits"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/channels": {
         parameters: {
             query?: never;
@@ -3811,6 +3833,24 @@ export interface components {
             profile_toml?: string | null;
             runtime?: null | components["schemas"]["RuntimeConfigDto"];
         };
+        /** @description Usage of the three periods. */
+        BotLimitUsageDto: {
+            /** @description Today. */
+            daily: components["schemas"]["PeriodUsageDto"];
+            /** @description This month. */
+            monthly: components["schemas"]["PeriodUsageDto"];
+            /** @description This week. */
+            weekly: components["schemas"]["PeriodUsageDto"];
+        };
+        /** @description Daily, weekly and monthly limits of one bot. */
+        BotLimitsDto: {
+            /** @description Per local calendar day. */
+            daily?: components["schemas"]["PeriodLimitDto"];
+            /** @description Per local calendar month. */
+            monthly?: components["schemas"]["PeriodLimitDto"];
+            /** @description Per local calendar week (Monday start). */
+            weekly?: components["schemas"]["PeriodLimitDto"];
+        };
         /**
          * @description `PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.
          *     Every field not named - including unknown keys - stays exactly as stored.
@@ -3866,6 +3906,30 @@ export interface components {
              *     overwriting a newer assignment.
              */
             version: number;
+        };
+        /** @description A bot's limits, their usage and the default applied to bots that were never configured. */
+        BotSpendLimitsDto: {
+            /**
+             * Format: int64
+             * @description Daily hard cap of a bot that was never configured (tokens).
+             */
+            default_daily_hard_tokens: number;
+            /**
+             * Format: double
+             * @description Daily hard cap of a bot that was never configured (USD).
+             */
+            default_daily_hard_usd: number;
+            /** @description `true` while the bot has no saved limits and the safe default applies. */
+            is_default: boolean;
+            /** @description The limits in force. */
+            limits: components["schemas"]["BotLimitsDto"];
+            /**
+             * Format: int64
+             * @description Now, as the daemon sees it (ms since epoch).
+             */
+            now_ms: number;
+            /** @description What each period has used. */
+            usage: components["schemas"]["BotLimitUsageDto"];
         };
         /** @description Usage of one bot. */
         BotUsage: components["schemas"]["UsageTotals"] & {
@@ -6489,6 +6553,60 @@ export interface components {
             /** Format: int32 */
             rtt_ms: number;
         };
+        /**
+         * @description Limits of one period. `null` = not set. Soft limits notify at 80% and 100%;
+         *     hard limits stop model calls before they happen.
+         */
+        PeriodLimitDto: {
+            /**
+             * Format: int64
+             * @description Stop model calls beyond this many tokens.
+             */
+            hard_tokens?: number | null;
+            /**
+             * Format: double
+             * @description Stop model calls beyond this amount (USD, 0.01 to 1,000,000).
+             */
+            hard_usd?: number | null;
+            /**
+             * Format: int64
+             * @description Notify at 80% and 100% of this many tokens.
+             */
+            soft_tokens?: number | null;
+            /**
+             * Format: double
+             * @description Notify at 80% and 100% of this amount (USD, 0.01 to 1,000,000).
+             */
+            soft_usd?: number | null;
+        };
+        /** @description What one period has used so far. */
+        PeriodUsageDto: {
+            /**
+             * Format: int64
+             * @description When the counter resets (ms since epoch).
+             */
+            resets_ms: number;
+            /**
+             * Format: int64
+             * @description Period start (ms since epoch).
+             */
+            start_ms: number;
+            /**
+             * Format: int64
+             * @description Tokens counted in the period.
+             */
+            tokens: number;
+            /**
+             * Format: int64
+             * @description Calls whose provider reported no usage; counted by a conservative estimate.
+             */
+            unreported_calls: number;
+            /**
+             * Format: double
+             * @description Money counted in the period (USD). Models without a known price add nothing here.
+             */
+            usd: number;
+        };
         /** @enum {string} */
         PointerPhase: "move" | "down" | "up";
         /** @description The global default permission policy (`GET` / `PUT /v1/policy`). */
@@ -6576,6 +6694,11 @@ export interface components {
             mode: components["schemas"]["SkillAssignmentModeDto"];
             /** @description Skill names to assign when `mode == "selected"` (max 200). */
             names?: string[];
+        };
+        /** @description `PUT /v1/bots/{id}/spend-limits`. */
+        PutBotSpendLimitsInput: {
+            /** @description The new limits; every field left `null` is unlimited. Replaces all previous values. */
+            limits: components["schemas"]["BotLimitsDto"];
         };
         /** @enum {string} */
         Reason: "browser_idle" | "viewer_idle" | "time_limit" | "remote_node_live_view" | "unsupported" | "unavailable" | "expired" | "revoked" | "disconnected" | "stale" | "geometry_changed" | "refresh_pending" | "frame_budget_exceeded" | "drain_timeout" | "audit_failed" | "reset_failed" | "partial_injection" | "rate_limited" | "restart" | "persistence_failed" | "local_override";
@@ -9808,6 +9931,78 @@ export interface operations {
             };
             /** @description skills are not available */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_bot_spend_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSpendLimitsDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_bot_spend_limits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Bot id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutBotSpendLimitsInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BotSpendLimitsDto"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

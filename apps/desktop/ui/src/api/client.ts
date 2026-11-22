@@ -122,6 +122,7 @@ import type {
   TerminalInfo,
   TerminalOutput,
   SpendLimit,
+  BotSpendLimits,
   UsageSummary,
   ViewHeartbeat,
   TranscribeInput,
@@ -890,6 +891,15 @@ export class ApiClient {
   /** Set (USD, at least 1) or clear (`null`) the monthly limit; owner only. */
   setSpendLimit(limitUsd: number | null): Promise<SpendLimit> {
     return this.request("PUT", "/spend-limit", { body: { limit_usd: limitUsd } });
+  }
+
+  /** A bot's daily/weekly/monthly limits with what each period has used. */
+  getBotSpendLimits(botId: string): Promise<BotSpendLimits> {
+    return this.request("GET", `/bots/${botId}/spend-limits`);
+  }
+  /** Replace a bot's limits (owner only); `null` fields are unlimited. */
+  setBotSpendLimits(botId: string, limits: BotSpendLimits["limits"]): Promise<BotSpendLimits> {
+    return this.request("PUT", `/bots/${botId}/spend-limits`, { body: { limits } });
   }
 
   usage(

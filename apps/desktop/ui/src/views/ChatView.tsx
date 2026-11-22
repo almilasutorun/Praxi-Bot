@@ -11,6 +11,8 @@ import {
   Terminal,
   Zap
 } from "lucide-react";
+import { BotLimitCard } from "../components/BotLimitCard";
+import { parseLimitReached } from "../lib/botLimits";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -1544,7 +1546,11 @@ export function ChatView({
               case "runError":
                 return (
                   <div key={e.key} className={styles.runError}>
-                    <ErrorNotice compact error={runErrorFor(e.message)} onAction={onRunErrorAction} />
+                    {parseLimitReached(e.message) ? (
+                      <BotLimitCard limit={parseLimitReached(e.message)!} />
+                    ) : (
+                      <ErrorNotice compact error={runErrorFor(e.message)} onAction={onRunErrorAction} />
+                    )}
                   </div>
                 );
               case "route": {

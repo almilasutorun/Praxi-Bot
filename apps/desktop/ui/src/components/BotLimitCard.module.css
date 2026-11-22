@@ -1,0 +1,4 @@
+.card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); border: var(--border-width-thin) solid var(--color-warning); background-color: var(--color-surface-raised); color: var(--color-text); }
+.head { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); }
+.body, .note { margin: var(--space-0); font-size: var(--font-size-sm); color: var(--color-text-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }

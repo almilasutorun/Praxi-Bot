@@ -71,6 +71,7 @@ Notable additions in the `0.1.0` desktop, CLI, and evaluation surface:
 | Let a lighter model answer simple first turns | [Optional model tiering](model-tiering.md) |
 | Configure bounded advisory decisions | [Optional decision pool](decision-pool.md) |
 | See what each model call in a run was for and what it used | [LLM call ledger](llm-call-ledger.md) |
+| Cap what a bot may spend per day, week or month | [Bot spending limits](bot-spending-limits.md) |
 | Use a local coding CLI (Claude Code, Codex, Cursor, ...) as the engine | [Coding CLI engines](cli-engines.md) |
 | Talk to your bots from your phone | [Telegram](telegram.md) |
 | Read, search, draft or send e-mails | [Email integration](email.md) |

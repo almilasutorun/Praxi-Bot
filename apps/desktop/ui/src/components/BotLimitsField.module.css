@@ -1,0 +1,11 @@
+.root { display: flex; flex-direction: column; gap: var(--space-4); }
+.defaultNote { margin: var(--space-0); padding: var(--space-3); border-radius: var(--radius-md); background-color: var(--color-surface-active); color: var(--color-text); font-size: var(--font-size-sm); }
+.period { display: flex; flex-direction: column; gap: var(--space-2); }
+.periodTitle { margin: var(--space-0); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text); }
+.bar { height: var(--space-2); border-radius: var(--radius-pill); background-color: var(--color-surface-active); overflow: hidden; }
+.fill { height: 100%; border-radius: var(--radius-pill); background-color: var(--color-accent); transition: width var(--motion-duration-slow) var(--motion-easing-standard); }
+.bar[data-level="warn"] .fill { background-color: var(--color-warning); }
+.bar[data-level="full"] .fill { background-color: var(--color-danger); }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(var(--size-control-lg) * 2), 1fr)); gap: var(--space-3); }
+.actions { display: flex; align-items: center; gap: var(--space-3); }
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

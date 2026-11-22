@@ -651,6 +651,7 @@
       "advanced": "Gelişmiş",
       "apps": "Uygulamalar",
       "identity": "Kimlik",
+      "limits": "Limitler",
       "models": "Modeller",
       "permissions": "İzinler",
       "skills": "Beceriler"
@@ -659,6 +660,7 @@
       "advanced": "Özel model kimlikleri, botun çalıştığı yer ve silme.",
       "apps": "Bu botun kullanabileceği bağlı uygulamalar.",
       "identity": "Ad, görünüm ve kişilik.",
+      "limits": "Bu botun günde, haftada ve ayda en fazla ne kadar harcayabileceği.",
       "models": "İşi hangi model yapar, hangileri yardım eder.",
       "permissions": "Bot sana sormadan neler yapabilir.",
       "skills": "Bu bota sunulan ortak beceriler."
@@ -824,6 +826,47 @@
     },
     "runtime": "Bilgisayar ve tarayıcı",
     "runtimeHint": "Şimdilik yalnızca bu makine desteklenir."
+  },
+  "botLimits": {
+    "card": {
+      "body": {
+        "tokens": "Bu bot token limitini doldurdu. Koşu model çağrılmadan durduruldu, yani limit aşılmadı.",
+        "usd": "Bu bot harcama limitini doldurdu. Koşu model çağrılmadan durduruldu, yani limit aşılmadı."
+      },
+      "raise": "Limiti yükselt",
+      "stop": "Durdur",
+      "stopped": "Durduruldu. Limiti istediğin zaman bot ayarlarından yükseltebilirsin.",
+      "title": {
+        "daily": "Günlük limite ulaşıldı",
+        "monthly": "Aylık limite ulaşıldı",
+        "weekly": "Haftalık limite ulaşıldı"
+      },
+      "wait": "Bekle",
+      "waiting": "Tamam. Limit {{when}} tarihinde sıfırlanınca bot yeniden çalışabilir.",
+      "waitingUnknown": "Tamam. Limit sıfırlanınca bot yeniden çalışabilir."
+    },
+    "defaultNote": "Bu botun henüz kayıtlı limiti yok, bu yüzden günde {{usd}} veya {{tokens}} token güvenli üst sınırı geçerli. Bot daha fazlasına ihtiyaç duyuyorsa buradan yükselt.",
+    "field": {
+      "hard_tokens": "Durdurma eşiği (token)",
+      "hard_usd": "Durdurma eşiği (USD)",
+      "soft_tokens": "Uyarı eşiği (token)",
+      "soft_usd": "Uyarı eşiği (USD)"
+    },
+    "hint": "Uyarı yalnızca %80 ve %100'de bildirim verir. Durdurma, model çağrılmadan koşuyu bitirir. Fiyatı bilinmeyen modellerde yalnızca token sayılır. Zamanlamalar ve kanal mesajları aynı limitlere uyar.",
+    "invalid": "Pozitif bir miktar gir (para 0,01'den başlar, token tam sayı olmalı) ya da alanı boş bırak.",
+    "order": "Uyarı eşiği durdurma eşiğinden yüksek olamaz.",
+    "period": {
+      "daily": "Günlük",
+      "monthly": "Aylık",
+      "weekly": "Haftalık"
+    },
+    "remote": "Limitler yalnızca bu bilgisayarda değiştirilebilir, uzak bir sunucuda değil.",
+    "save": "Limitleri kaydet",
+    "saved": "Limitler kaydedildi.",
+    "saving": "Kaydediliyor…",
+    "unlimited": "Limit yok",
+    "unreported": "{{count}} çağrı kullanım bildirmedi ve temkinli bir tahminle sayıldı.",
+    "used": "{{usd}} ve {{tokens}} token kullanıldı. Sıfırlanma: {{when}}."
   },
   "botPanel": {
     "botsComputer": "{{bot}} botunun bilgisayarı · {{name}}",
@@ -2027,6 +2070,18 @@
       "bad_web_config": {
         "hint": "Anahtarı ya da adresi kontrol edip yeniden kaydet.",
         "title": "Web arama ayarları geçerli değil"
+      },
+      "bot_limit_exhausted": {
+        "hint": "Bir uyarı eşiğinin %100'üne ulaştı. Koşular durdurma eşiğine kadar sürer.",
+        "title": "Bu bot koyduğun bir limiti doldurdu"
+      },
+      "bot_limit_reached": {
+        "hint": "Model çağrılmadı. Bot ayarlarında limiti yükselt, sıfırlanmasını bekle ya da koşuyu durmuş bırak.",
+        "title": "Bot limitine ulaşıldı"
+      },
+      "bot_limit_warning": {
+        "hint": "Bir harcama limitinin %80'ini kullandı. Bot ayarlarındaki limitlere bak.",
+        "title": "Bu bot limitine yaklaştı"
       },
       "busy": {
         "hint": "Biraz bekleyip yeniden dene.",

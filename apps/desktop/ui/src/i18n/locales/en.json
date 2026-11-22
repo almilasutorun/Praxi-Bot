@@ -651,6 +651,7 @@
       "advanced": "Advanced",
       "apps": "Apps",
       "identity": "Identity",
+      "limits": "Limits",
       "models": "Models",
       "permissions": "Permissions",
       "skills": "Skills"
@@ -659,6 +660,7 @@
       "advanced": "Custom model ids, where the bot runs, and deleting it.",
       "apps": "The connected apps this bot may use.",
       "identity": "Name, look and personality.",
+      "limits": "How much this bot may spend per day, week and month.",
       "models": "Which model does the work, and which ones help.",
       "permissions": "What the bot may do without asking you.",
       "skills": "The shared skills this bot is offered."
@@ -824,6 +826,47 @@
     },
     "runtime": "Computer & browser",
     "runtimeHint": "Only this machine is supported for now."
+  },
+  "botLimits": {
+    "card": {
+      "body": {
+        "tokens": "This bot used up its token limit. The run was stopped before the model was called, so nothing went over.",
+        "usd": "This bot used up its spending limit. The run was stopped before the model was called, so nothing went over."
+      },
+      "raise": "Raise limit",
+      "stop": "Stop",
+      "stopped": "Stopped. You can raise the limit any time in the bot settings.",
+      "title": {
+        "daily": "Daily limit reached",
+        "monthly": "Monthly limit reached",
+        "weekly": "Weekly limit reached"
+      },
+      "wait": "Wait",
+      "waiting": "Okay. The bot can work again after the limit resets on {{when}}.",
+      "waitingUnknown": "Okay. The bot can work again after the limit resets."
+    },
+    "defaultNote": "This bot has no saved limits yet, so a safe cap of {{usd}} or {{tokens}} tokens per day applies. Raise it here if the bot needs more.",
+    "field": {
+      "hard_tokens": "Stop at (tokens)",
+      "hard_usd": "Stop at (USD)",
+      "soft_tokens": "Warn at (tokens)",
+      "soft_usd": "Warn at (USD)"
+    },
+    "hint": "A warning only notifies you at 80% and 100%. A stop ends the run before the model is called. Models with an unknown price count tokens only. Schedules and channel messages follow the same limits.",
+    "invalid": "Enter a positive amount (money from 0.01, tokens as whole numbers) or leave the field empty.",
+    "order": "The warning level must not be above the stop level.",
+    "period": {
+      "daily": "Per day",
+      "monthly": "Per month",
+      "weekly": "Per week"
+    },
+    "remote": "Limits can only be changed on this computer, not on a remote host.",
+    "save": "Save limits",
+    "saved": "Limits saved.",
+    "saving": "Saving…",
+    "unlimited": "No limit",
+    "unreported": "{{count}} calls reported no usage and are counted by a cautious estimate.",
+    "used": "Used {{usd}} and {{tokens}} tokens. Resets {{when}}."
   },
   "botPanel": {
     "botsComputer": "{{bot}}'s computer · {{name}}",
@@ -2027,6 +2070,18 @@
       "bad_web_config": {
         "hint": "Check the key or address and save again.",
         "title": "The web search settings are not valid"
+      },
+      "bot_limit_exhausted": {
+        "hint": "It has used 100% of a warning level. Runs continue until the stop level.",
+        "title": "This bot used all of a limit you set"
+      },
+      "bot_limit_reached": {
+        "hint": "The model was not called. Raise the limit in the bot settings, wait for it to reset, or leave the run stopped.",
+        "title": "Bot limit reached"
+      },
+      "bot_limit_warning": {
+        "hint": "It has used 80% of a spending limit. Check the limits in the bot settings.",
+        "title": "This bot is close to its limit"
       },
       "busy": {
         "hint": "Wait a moment and try again.",

@@ -72,6 +72,7 @@ export type ModelUsage = S["ModelUsage"];
 export type ProviderUsage = S["ProviderUsage"];
 export type DailyUsage = S["DailyUsage"];
 export type SpendLimit = S["SpendLimitDto"];
+export type BotSpendLimits = S["BotSpendLimitsDto"];
 export type UsageTotals = S["UsageTotals"];
 export type EffectivePolicy = S["EffectivePolicyDto"];
 export type Grant = S["GrantDto"];

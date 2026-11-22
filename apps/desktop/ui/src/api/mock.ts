@@ -7,6 +7,7 @@ import { MOCK_MCP_CATALOG } from "./mockCatalog.ts";
 import { MockHostSetup } from "./mockHostSetup.ts";
 import { MockLiveViewService } from "./mockLiveView.ts";
 import type {
+  BotSpendLimits,
   Bot,
   BotSkills,
   Chat,
@@ -788,6 +789,7 @@ export class MockApiClient extends ApiClient {
   readonly secrets = new Map<string, number>();
   readonly doctorChecks: DoctorCheck[] = structuredClone(DOCTOR_CHECKS);
   spendLimit: number | null = null;
+  readonly botLimits = new Map<string, BotSpendLimits["limits"]>();
   /** Repairs run so far (tests). */
   readonly repairs: string[] = [];
   private readonly liveView = new MockLiveViewService();
@@ -1052,6 +1054,24 @@ export class MockApiClient extends ApiClient {
         ...(req.set_home ? [{ kind: "home", id: "home", name: "home", status: "done", code: null }] : [])
       ];
       return ok({ items });
+    }
+    if (seg[0] === "bots" && seg[2] === "spend-limits") {
+      const bot = seg[1] ?? "";
+      if (!this.bots.some((b) => b.id === bot)) throw new ApiError(404, "not_found", "bot");
+      if (method === "PUT") {
+        this.botLimits.set(bot, (opts.body as { limits: BotSpendLimits["limits"] }).limits);
+      }
+      const none = { soft_usd: null, hard_usd: null, soft_tokens: null, hard_tokens: null };
+      const saved = this.botLimits.get(bot);
+      const now = Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      const usage = (usd: number, tokens: number, span: number) => ({ start_ms: now - day, resets_ms: now + span, usd, tokens, unreported_calls: 0 });
+      return ok({
+        limits: saved ?? { daily: { ...none, hard_usd: 5, hard_tokens: 10_000_000 }, weekly: none, monthly: none },
+        is_default: saved === undefined,
+        usage: { daily: usage(1.27, 182_000, day), weekly: usage(3.4, 640_000, 4 * day), monthly: usage(9.8, 2_100_000, 20 * day) },
+        default_daily_hard_usd: 5, default_daily_hard_tokens: 10_000_000, now_ms: now
+      });
     }
     if (seg[0] === "bots" && seg[2] === "knowledge") {
       if (!this.bots.some((bot) => bot.id === seg[1])) throw new ApiError(404, "not_found", "bot");

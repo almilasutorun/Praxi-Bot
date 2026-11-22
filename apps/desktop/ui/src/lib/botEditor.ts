@@ -18,6 +18,7 @@ export const BOT_EDITOR_SECTIONS = [
   "permissions",
   "skills",
   "apps",
+  "limits",
   "advanced"
 ] as const;
 

@@ -135,6 +135,8 @@ import { AppsModal } from "./views/AppsModal";
 import { NewBotModal } from "./views/NewBotModal";
 import { SettingsModal } from "./views/SettingsModal";
 import { OPEN_AI_SETTINGS_EVENT } from "./state/useCliEngineRows";
+import { OPEN_BOT_LIMITS_EVENT } from "./lib/botLimits";
+import type { BotEditorSection } from "./lib/botEditor";
 import { EngineConsentProvider } from "./state/EngineConsent";
 import type { SettingsSectionId } from "./views/settings/types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -263,6 +265,16 @@ function AppShell() {
     const q = isMockMode() && typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
     return { section: editorSection(q?.get("section")), installStep: q?.get("step") === "install" };
   });
+  // "Raise limit" on a stopped run opens the editor on its Limits section.
+  const [editSection, setEditSection] = useState<BotEditorSection | undefined>(review.section);
+  useEffect(() => {
+    const open = () => {
+      setEditSection("limits");
+      setBotEditOpen(true);
+    };
+    window.addEventListener(OPEN_BOT_LIMITS_EVENT, open);
+    return () => window.removeEventListener(OPEN_BOT_LIMITS_EVENT, open);
+  }, []);
   const [newChatBusy, setNewChatBusy] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
   const [botSearch, setBotSearch] = useState<string | null>(null);
@@ -1197,8 +1209,11 @@ function AppShell() {
         open={botEditOpen && botInView}
         bot={selectedBot}
         skills={botSkills}
-        initialSection={review.section}
-        onClose={() => setBotEditOpen(false)}
+        initialSection={editSection}
+        onClose={() => {
+          setBotEditOpen(false);
+          setEditSection(review.section);
+        }}
         onAddSkill={() => setAddSkillOpen(true)}
         onDeleted={() => {
           setBotEditOpen(false);
