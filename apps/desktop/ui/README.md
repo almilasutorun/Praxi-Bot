@@ -42,7 +42,8 @@ exit code 1 on any failure. About 3 minutes after the first build.
 - Needs Chrome (`CHROME_BIN` to override) and a Rust toolchain. Builds `bot` and the fake coding CLI
   into `CARGO_TARGET_DIR` (default `target` at the repository root). `--no-build` reuses both binaries.
   `--only=<text>` filters steps. Include any steps that create state your selected step depends on.
-- Starts its own processes (stub, daemon, vite, Chrome) and stops them by PID; temp data dir is deleted.
+- Starts and stops its own stub, daemon, Vite and Chrome processes. If Windows keeps an ACL-protected
+  fixture file, the harness prints the temporary directory it retained.
 - Tauri commands are shimmed for the browser (list printed at the end). Screenshots and logs go to
   `SMOKE_SHOTS`, which defaults to `praxi-smoke-shots` in the OS temporary directory.
 - CI runs it on Windows and headless Linux for desktop and daemon changes. See the

@@ -1,7 +1,7 @@
 // Real-app smoke run: the production UI bundle against a real local daemon
 // (`bot serve`, debug build) that talks to a tiny scripted OpenAI-compatible stub.
 //   node scripts/smoke.mjs [--no-build] [--only=<substring>] [--keep] [--headed]
-// Everything it starts is stopped by PID in `finally`; its temp dir is deleted unless --keep.
+// Everything it starts is stopped in `finally`; it attempts to remove its temp dir unless --keep.
 //
 // Tauri commands shimmed for the browser run (everything else answers `null` and is listed at the end):
 //   daemon_connect / daemon_restart  -> the daemon this script started (started_by_app: true)
@@ -340,6 +340,7 @@ async function main() {
     throw new Error('smoke runtime timed out');
   });
   let ok;
+  let allStopped;
   try {
     ok = await Promise.race([runSmoke(tmp, runtime), deadline]);
   } finally {
@@ -352,15 +353,16 @@ async function main() {
       killTree(child);
       return closed;
     });
-    await Promise.race([Promise.all(stopped), delay(5000, undefined, { ref: false })]);
+    allStopped = await Promise.race([Promise.all(stopped).then(() => true), delay(5000, false, { ref: false })]);
     if (args.includes('--keep')) log(`kept ${tmp}`);
     else {
-      await rm(tmp, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 }).catch((error) => {
-        log(`could not remove ${tmp}: ${error.message}`);
-        if (ok) throw error;
-      });
+      // Windows can refuse removal of the daemon's ACL-protected token file.
+      // Keep the isolated directory in that case and preserve its ACL.
+      const removal = rm(tmp, { recursive: true, force: true }).then(() => true, () => false);
+      if (!await Promise.race([removal, delay(5000, false, { ref: false })])) log(`kept ${tmp}: temporary files could not be removed`);
     }
   }
+  if (ok && !allStopped) throw new Error('a smoke child did not exit');
   return ok;
 }
 
