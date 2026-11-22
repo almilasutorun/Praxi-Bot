@@ -53,7 +53,12 @@ const freePort = () => new Promise((ok, no) => {
 });
 const killTree = (c) => {
   if (!c.pid) return;
-  if (windows) spawnSync('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
+  if (windows) {
+    const killed = spawnSync('taskkill', ['/PID', String(c.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000, windowsHide: true });
+    // The daemon restricts the rights taskkill can request when opening its PID.
+    // The harness already owns the child process handle from spawn.
+    if (killed.status !== 0) c.kill();
+  }
   else try { process.kill(-c.pid); } catch { /* gone */ }
 };
 function start(program, argv, options) {

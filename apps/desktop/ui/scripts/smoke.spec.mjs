@@ -415,16 +415,16 @@ export async function flows(ctx) {
   const composerEmpty = (page) => page.waitForFunction(() => { const el = document.querySelector('textarea[role="combobox"]'); return !el || el.value === ''; }, null, { timeout: 30000 });
   const openCount = () => ctx.stubLog.filter((l) => l === 'MODEL_OPEN').length;
   const abortCount = () => ctx.stubLog.filter((l) => l === 'MODEL_ABORTED').length;
-  /** Press Stop, then within 3 s: run cancelled in the daemon, UI out of the running state, composer usable. */
-  const stopAndCheck = async (page, before, { appearWithin = 15000, afterClick } = {}) => {
+  /** Press Stop and verify daemon cancellation, settled UI and an enabled composer. */
+  const stopAndCheck = async (page, before, { appearWithin = 15000, cancelWithin = STOP_WITHIN, afterClick } = {}) => {
     // The send button is the Stop button (a rounded square) while the bot works and the box is empty.
     const stopBtn = page.locator('[data-testid="send-button"][data-mode="stop"]');
     await stopBtn.waitFor({ timeout: appearWithin });
     await stopBtn.click();
     await afterClick?.();
     const t0 = Date.now();
-    await until('run reaches "cancelled" in the daemon', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id && r.state === 'cancelled'), STOP_WITHIN);
-    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
+    await until('run reaches "cancelled" in the daemon', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id && r.state === 'cancelled'), cancelWithin);
+    await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: Math.max(cancelWithin - (Date.now() - t0), 500) });
     if (await stopBtn.isVisible()) throw new Error('the Stop button is still shown after the run stopped');
     const c = composer(page);
     await c.fill('x');
@@ -493,6 +493,8 @@ export async function flows(ctx) {
       await c.press('Enter');
       await stopAndCheck(page, before, {
         appearWithin: 1500,
+        // Before the first event, the UI must receive the send response before it can cancel by run ID.
+        cancelWithin: 15000,
         afterClick: async () => {
           release.resolve();
           // A pre-send Stop can be applied only once the daemon has registered the held request.
