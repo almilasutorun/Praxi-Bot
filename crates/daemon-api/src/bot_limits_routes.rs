@@ -9,6 +9,7 @@ use agent_core::bot_limits::{
     BotLimits, DEFAULT_DAILY_HARD_TOKENS, DEFAULT_DAILY_HARD_USD, Period, PeriodLimit, load_limits,
     period_usage,
 };
+use axum::http::HeaderMap;
 use axum::{Json, extract::Path as AxumPath, extract::State};
 use protocol::BotId;
 use serde::{Deserialize, Serialize};
@@ -184,9 +185,12 @@ pub(crate) async fn get_bot_spend_limits(
               (status = 404, body = ErrorBody)))]
 pub(crate) async fn put_bot_spend_limits(
     State(s): State<AppState>,
+    headers: HeaderMap,
     AxumPath(id): AxumPath<Uuid>,
     ApiJson(input): ApiJson<PutBotSpendLimitsInput>,
 ) -> Result<Json<BotSpendLimitsDto>, ApiError> {
+    // Defence in depth next to `OWNER_ROUTES` and the peer denial.
+    s.require_owner(&headers)?;
     let bot = s.bot_of_user(BotId(id))?;
     let new = from_dto(&input.limits);
     new.validate().map_err(ApiError::bad_request)?;

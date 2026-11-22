@@ -33,7 +33,10 @@ example Telegram), subagents and background memory work follow the same limits.
 
 - Money comes from the recorded cost of each call in the
   [LLM call ledger](llm-call-ledger.md). Models without a known price add tokens
-  only (a money limit that is already used up still stops them).
+  only. A money (USD) limit therefore cannot count them: it does not stop a
+  model whose price is unknown. That is why every new bot also gets a token
+  cap, which counts every model. Set a token limit as well when you use
+  models without a known price.
 - A call whose provider reported no usage is counted with a cautious estimate,
   so missing data never means free. The page shows how many calls were counted
   this way.
@@ -42,7 +45,8 @@ example Telegram), subagents and background memory work follow the same limits.
 
 ## Who can change limits
 
-Only the owner (the desktop app on this computer). A bot, a CLI engine, the MCP
+Only the owner (the desktop app on this computer). A paired phone or another
+desktop cannot change or erase a limit either; they can only read it. A bot, a CLI engine, the MCP
 mode or anything holding only the API token cannot change or lift a limit, and
 every change is written to the audit log (`bot.spend_limits_changed`, with the
 old and the new values). Limits of a remote host are changed on that host.

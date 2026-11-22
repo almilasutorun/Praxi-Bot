@@ -346,6 +346,9 @@ fn host_local_denial(method: &Method, check_path: &str) -> Option<&'static str> 
     if is_bot_engine_path(check_path) && *method != Method::GET {
         return Some("a bot's engine settings can only be changed at this computer");
     }
+    if is_bot_spend_limits_path(check_path) && *method != Method::GET {
+        return Some("a bot's spending limits can only be changed at this computer");
+    }
     is_doctor_path(check_path).then_some("host-local diagnostics are not allowed for peers")
 }
 
@@ -392,6 +395,13 @@ fn is_bot_engine_path(path: &str) -> bool {
         .is_some_and(|(id, tail)| {
             !id.is_empty() && !id.contains('/') && (tail.is_empty() || tail == "/kill")
         })
+}
+
+/// `/v1/bots/{id}/spend-limits`: the cap a bot (or a peer) must not lift.
+fn is_bot_spend_limits_path(path: &str) -> bool {
+    path.strip_prefix("/v1/bots/")
+        .and_then(|rest| rest.strip_suffix("/spend-limits"))
+        .is_some_and(|id| !id.is_empty() && !id.contains('/'))
 }
 
 /// `/v1/bots/{id}/skills` mutates a bot's prompt-trust boundary.
@@ -619,6 +629,18 @@ mod tests {
                 );
             }
         }
+        assert!(host_local_denial(&Method::PUT, "/v1/bots/abc").is_none());
+    }
+
+    #[test]
+    fn peers_never_change_a_bots_spend_limits() {
+        let path = "/v1/bots/abc/spend-limits";
+        // The guard is role-independent: a Phone or Desktop peer cannot erase
+        // the caps (all-null body) or raise one; PUT/POST/DELETE are all refused.
+        for method in [Method::PUT, Method::POST, Method::DELETE, Method::PATCH] {
+            assert!(host_local_denial(&method, path).is_some(), "{method}");
+        }
+        assert!(host_local_denial(&Method::GET, path).is_none());
         assert!(host_local_denial(&Method::PUT, "/v1/bots/abc").is_none());
     }
 
