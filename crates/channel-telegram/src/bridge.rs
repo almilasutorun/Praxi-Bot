@@ -464,34 +464,33 @@ fn approval_markup(
     a: &protocol::event::ApprovalNeeded,
     offer_run_control: bool,
 ) -> Option<InlineKeyboardMarkup> {
-    let mut row = vec![InlineButton::new(
-        Message::ApproveOnce.english(),
-        format_approval_callback(a.call_id, "once"),
-    )];
-    // Only when the whole card fits one message: the daemon-written lines that
-    // name the program and what it covers are then on screen with the button.
-    if offer_run_control
-        && let Some(program) = a
-            .details
-            .as_ref()
-            .and_then(protocol::approval_text::control_grant_program)
-    {
-        row.push(InlineButton::new(
-            Message::ApproveForTask { program: &program }.english(),
-            format_approval_callback(a.call_id, "run"),
-        ));
-    }
-    // No standing grant for tools that bring details.
-    if a.details.is_none() {
-        row.push(InlineButton::new(
+    let for_task = a
+        .details
+        .as_ref()
+        .and_then(protocol::approval_text::control_grant_program)
+        .map(|program| {
+            InlineButton::new(
+                Message::ApproveForTask { program: &program }.english(),
+                format_approval_callback(a.call_id, "run"),
+            )
+        });
+    let row = channel_api::approval::approval_row(
+        a.details.is_some(),
+        offer_run_control,
+        InlineButton::new(
+            Message::ApproveOnce.english(),
+            format_approval_callback(a.call_id, "once"),
+        ),
+        for_task,
+        InlineButton::new(
             Message::Always.english(),
             format_approval_callback(a.call_id, "always"),
-        ));
-    }
-    row.push(InlineButton::new(
-        Message::Deny.english(),
-        format_approval_callback(a.call_id, "deny"),
-    ));
+        ),
+        InlineButton::new(
+            Message::Deny.english(),
+            format_approval_callback(a.call_id, "deny"),
+        ),
+    );
     InlineKeyboardMarkup::from_rows(vec![row])
 }
 
@@ -2075,9 +2074,12 @@ impl TelegramChannel {
     }
 }
 
-#[async_trait]
-impl Channel for TelegramChannel {
-    async fn receive(&self) -> Result<BoxStream<'static, IncomingMessage>> {
+impl TelegramChannel {
+    /// Poll Telegram updates, retaining them in the durable inbox.
+    ///
+    /// # Errors
+    /// Telegram transport or inbox persistence failed.
+    pub async fn receive(&self) -> Result<BoxStream<'static, IncomingMessage>> {
         let offset = {
             let rt = self.inner.runtime.lock();
             rt.next_offset
@@ -2097,7 +2099,11 @@ impl Channel for TelegramChannel {
         Ok(Box::pin(stream::iter(items)))
     }
 
-    async fn send(&self, to: ChatRef, msg: OutgoingMessage) -> Result<i64> {
+    /// Send using Telegram numeric identifiers.
+    ///
+    /// # Errors
+    /// Telegram transport failed.
+    pub async fn send(&self, to: ChatRef, msg: OutgoingMessage) -> Result<i64> {
         let clean = self.redact(&msg.text);
         let markup = InlineKeyboardMarkup::from_rows(msg.buttons);
         if let Some(message_id) = msg.edit_message_id {
@@ -2116,8 +2122,61 @@ impl Channel for TelegramChannel {
             Ok(sent.message_id)
         }
     }
+}
+
+#[async_trait]
+impl Channel for TelegramChannel {
+    async fn receive(
+        &self,
+    ) -> channel_api::Result<BoxStream<'static, channel_api::IncomingMessage>> {
+        let incoming = TelegramChannel::receive(self)
+            .await
+            .map_err(channel_api::ChannelError::from)?;
+        Ok(Box::pin(incoming.map(channel_api::IncomingMessage::from)))
+    }
+
+    async fn send(
+        &self,
+        to: channel_api::ChatRef,
+        msg: channel_api::OutgoingMessage,
+    ) -> channel_api::Result<String> {
+        let chat = parse_channel_id(&to.0)?;
+        let edit_message_id = msg
+            .edit_message_id
+            .as_deref()
+            .map(parse_channel_id)
+            .transpose()?;
+        TelegramChannel::send(
+            self,
+            ChatRef(chat),
+            OutgoingMessage {
+                text: msg.text,
+                buttons: msg.buttons,
+                edit_message_id,
+            },
+        )
+        .await
+        .map(|id| id.to_string())
+        .map_err(Into::into)
+    }
+
+    async fn answer_callback(&self, query_id: &str, text: Option<&str>) -> channel_api::Result<()> {
+        let clean = text.map(|text| self.redact(text));
+        self.inner
+            .bot_api
+            .answer_callback_query(query_id, clean.as_deref())
+            .await
+            .map(|_| ())
+            .map_err(Into::into)
+    }
 
     fn capabilities(&self) -> ChannelCaps {
         ChannelCaps::telegram_v0()
     }
+}
+
+fn parse_channel_id(id: &str) -> channel_api::Result<i64> {
+    id.parse().map_err(|_| {
+        channel_api::ChannelError::InvalidInput("invalid Telegram numeric identifier".into())
+    })
 }

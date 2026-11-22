@@ -66,7 +66,7 @@ size are welcome: fixes, improvements and new features, from first-timers and re
 | `secret-store` | OS keychain / encrypted-file secrets and output redaction |
 | `daemon-api` | The local HTTP + SSE API (axum), OpenAPI generation, the owner-route tables |
 | `remote-api`, `peer-network`, `state-bundle`, `host-provision` | Pairing and the encrypted link to a host, state migration, server provisioning over SSH |
-| `channel-api`, `channel-telegram` | Client channel gateway and the Telegram adapter |
+| `channel-api`, `channel-telegram` | Messaging transport contract, shared pairing/approval helpers, and the Telegram adapter ([writing an adapter](docs/contributing/writing-a-channel.md)) |
 | `computer-target`, `live-view` | Per-bot computer selection and the live screen contracts |
 | `plugin-host` | Reserved placeholder with no code yet; the plugin design is tracked in [issue #213](https://github.com/emreocell/Praxi-Bot/issues/213) |
 | `evals` | The evaluation harness (`evals/`) |

@@ -1,16 +1,14 @@
-//! Channel plugin trait and message primitives (ADR-0019).
-//!
-//! `crates/channel-api` is currently a placeholder stub on `main`. To respect
-//! task boundaries (editing only `crates/channel-telegram`, root `Cargo.toml`,
-//! and `Cargo.lock`), these traits live here and can be re-exported from or
-//! moved into `channel-api` when wiring multiple channels.
+//! Telegram numeric identities and durable inbox representation.
+//! Shared transport primitives live in `channel-api`.
 
-use async_trait::async_trait;
-use futures::stream::BoxStream;
 use protocol::ChannelRef;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
+pub use channel_api::{Channel, ChannelCaps, InlineButton};
+/// Telegram callback payload with numeric message identifiers.
+pub type IncomingKind = channel_api::IncomingKind<i64>;
+/// Telegram outgoing payload with numeric edit identifiers.
+pub type OutgoingMessage = channel_api::OutgoingMessage<i64>;
 
 /// Identifies a destination chat on the messaging channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -37,72 +35,6 @@ impl std::fmt::Display for ChatRef {
     }
 }
 
-/// Capabilities advertised by a messaging channel (ADR-0019).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct ChannelCaps {
-    /// Supports interactive inline buttons (for approvals and question options).
-    pub inline_buttons: bool,
-    /// Supports editing a previously sent message in place (for streaming deltas).
-    pub message_editing: bool,
-    /// Supports file attachments.
-    pub file_upload: bool,
-    /// Supports voice messages.
-    pub voice_messages: bool,
-}
-
-impl ChannelCaps {
-    /// Default capabilities of the Telegram Bot API v0 adapter.
-    #[must_use]
-    pub const fn telegram_v0() -> Self {
-        Self {
-            inline_buttons: true,
-            message_editing: true,
-            file_upload: false,
-            voice_messages: false,
-        }
-    }
-}
-
-/// An inline button attached to an [`OutgoingMessage`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InlineButton {
-    /// Visible label on the button.
-    pub text: String,
-    /// Opaque payload returned when the user presses the button (≤ 64 bytes on Telegram).
-    pub callback_data: String,
-}
-
-impl InlineButton {
-    /// Create a new inline keyboard button.
-    #[must_use]
-    pub fn new(text: impl Into<String>, callback_data: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            callback_data: callback_data.into(),
-        }
-    }
-}
-
-/// Payload of an [`IncomingMessage`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum IncomingKind {
-    /// A text message or slash command (`/pair`, `/bots`, `/use`, `/stop`, `/status`).
-    Text(String),
-    /// An attachment this channel cannot read yet (voice, photo, file ...); the
-    /// payload is its human label.
-    Unsupported(String),
-    /// An inline button callback press.
-    Callback {
-        /// Telegram callback query id (used for `answerCallbackQuery`).
-        query_id: String,
-        /// The `callback_data` string attached to the pressed button.
-        data: String,
-        /// Message id of the message that carried the inline keyboard, if available.
-        message_id: Option<i64>,
-    },
-}
-
 /// An incoming event received from a messaging channel (ADR-0019).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncomingMessage {
@@ -120,55 +52,29 @@ pub struct IncomingMessage {
     pub kind: IncomingKind,
 }
 
-/// An outgoing message or in-place edit to be sent to a [`ChatRef`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OutgoingMessage {
-    /// Message body (always passed through the secret [`secret_store::Redactor`] before sending).
-    pub text: String,
-    /// Optional rows of inline keyboard buttons.
-    pub buttons: Vec<Vec<InlineButton>>,
-    /// When `Some(message_id)`, edits that existing message in place instead of sending a new one.
-    pub edit_message_id: Option<i64>,
-}
-
-impl OutgoingMessage {
-    /// Plain text message.
-    #[must_use]
-    pub fn text(text: impl Into<String>) -> Self {
+impl From<IncomingMessage> for channel_api::IncomingMessage {
+    fn from(msg: IncomingMessage) -> Self {
         Self {
-            text: text.into(),
-            buttons: Vec::new(),
-            edit_message_id: None,
+            event_id: msg.update_id.to_string(),
+            chat: channel_api::ChatRef(msg.chat.0.to_string()),
+            sender: channel_api::SenderIdentity {
+                id: msg.user_id.to_string(),
+                display_name: msg.username,
+            },
+            message_id: msg.message_id.map(|id| id.to_string()),
+            kind: match msg.kind {
+                IncomingKind::Text(text) => channel_api::IncomingKind::Text(text),
+                IncomingKind::Unsupported(label) => channel_api::IncomingKind::Unsupported(label),
+                IncomingKind::Callback {
+                    query_id,
+                    data,
+                    message_id,
+                } => channel_api::IncomingKind::Callback {
+                    query_id,
+                    data,
+                    message_id: message_id.map(|id| id.to_string()),
+                },
+            },
         }
     }
-
-    /// Edit an existing message in place.
-    #[must_use]
-    pub fn edit(message_id: i64, text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            buttons: Vec::new(),
-            edit_message_id: Some(message_id),
-        }
-    }
-
-    /// Attach rows of inline buttons.
-    #[must_use]
-    pub fn with_buttons(mut self, buttons: Vec<Vec<InlineButton>>) -> Self {
-        self.buttons = buttons;
-        self
-    }
-}
-
-/// Common interface for external messaging channels (ADR-0019).
-#[async_trait]
-pub trait Channel: Send + Sync {
-    /// Stream of incoming messages from the channel.
-    async fn receive(&self) -> Result<BoxStream<'static, IncomingMessage>>;
-
-    /// Send a new message or edit an existing message in `to`; returns the Telegram `message_id`.
-    async fn send(&self, to: ChatRef, msg: OutgoingMessage) -> Result<i64>;
-
-    /// Capabilities supported by this channel implementation.
-    fn capabilities(&self) -> ChannelCaps;
 }

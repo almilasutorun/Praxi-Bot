@@ -1448,20 +1448,21 @@ pub fn serve(
                 let leader = channel_state.leader().clone();
                 step("telegram configuration loading");
                 let telegram = tokio::task::spawn_blocking(move || {
-                    channels::telegram_runtime(
+                    channels::registered_channels(
                         &channel_data,
                         store,
                         &format!("http://{addr}"),
                         &api_token,
                         owner_key.as_deref(),
-                        None,
-                        Some(leader),
+                        leader,
                     )
                 })
                 .await;
                 match telegram {
-                    Ok(channel) => {
-                        channel_state.add_channel(channel);
+                    Ok(channels) => {
+                        for channel in channels {
+                            channel_state.add_channel(channel);
+                        }
                         step("telegram configuration loaded");
                     }
                     Err(e) => eprintln!("warning: telegram configuration task failed: {e}"),

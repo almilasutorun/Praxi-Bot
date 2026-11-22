@@ -323,6 +323,27 @@ pub fn telegram_runtime(
     })
 }
 
+/// Construct the registered adapters without starting polling. The daemon's
+/// channel registry controls start/stop with leadership and safe mode.
+pub fn registered_channels(
+    data_dir: &Path,
+    store: Arc<dyn SecretStore>,
+    daemon_url: &str,
+    daemon_token: &str,
+    owner_key: Option<&str>,
+    leader: daemon_api::host::LeaderControl,
+) -> Vec<Arc<dyn ChannelControl>> {
+    vec![telegram_runtime(
+        data_dir,
+        store,
+        daemon_url,
+        daemon_token,
+        owner_key,
+        None,
+        Some(leader),
+    )]
+}
+
 #[cfg(test)]
 mod conflict_status_tests {
     use super::*;

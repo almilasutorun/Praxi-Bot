@@ -61,3 +61,9 @@ pub enum TelegramError {
     #[error("config error: {0}")]
     Config(String),
 }
+
+impl From<TelegramError> for channel_api::ChannelError {
+    fn from(error: TelegramError) -> Self {
+        Self::Adapter(Box::new(error))
+    }
+}

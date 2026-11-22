@@ -7,6 +7,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub use channel_api::pairing::{
+    MAX_PAIR_ATTEMPTS, MAX_PAIR_ATTEMPTS_PER_USER, PAIR_CODE_TTL, PAIR_LOCKOUT,
+};
+use channel_api::pairing::{PairingInvites, PairingMatch};
+
 use parking_lot::Mutex;
 use protocol::{BotId, ChatId};
 use secret_store::{SecretRef, SecretStore, SecretValue, resolve};
@@ -18,33 +23,9 @@ use crate::error::{Result, TelegramError};
 /// Default [`SecretStore`] key name under which the Telegram bot token is stored.
 pub const TELEGRAM_BOT_TOKEN_SECRET: &str = "telegram.bot_token";
 
-/// Validity window of a one-time 6-digit pairing code (10 minutes).
-pub const PAIR_CODE_TTL: Duration = Duration::from_secs(10 * 60);
-
 /// Cooldown window before an unpaired user who already received the polite
 /// refusal message could ever receive another one.
 pub const REFUSAL_COOLDOWN: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// Maximum wrong `/pair` guesses (from anyone) before pending codes are invalidated.
-///
-/// This is the global brute-force cap: a 6-digit code survives at most this many wrong
-/// guesses in total, no matter how many Telegram accounts they come from. Because only
-/// one live code exists at a time (see [`PairingStore::create_code`]) the total guessing
-/// budget per code is `MAX_PAIR_ATTEMPTS`, i.e. an attacker's success chance is about
-/// `MAX_PAIR_ATTEMPTS / 1_000_000`.
-///
-/// Known trade-off (accepted): the counter is shared, so any Telegram user can burn the
-/// owner's code with `MAX_PAIR_ATTEMPTS` wrong `/pair` messages. That is only a
-/// denial of pairing, never an authentication bypass; the owner generates a new code, or
-/// pre-pairs through configuration (`TelegramConfig::with_paired_users`), which does not
-/// depend on codes at all and is the fallback path.
-pub const MAX_PAIR_ATTEMPTS: u32 = 5;
-
-/// Maximum wrong `/pair` guesses per Telegram user before that user is locked out.
-pub const MAX_PAIR_ATTEMPTS_PER_USER: u32 = 5;
-
-/// How long a user stays locked out after exceeding [`MAX_PAIR_ATTEMPTS_PER_USER`].
-pub const PAIR_LOCKOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Global cap of polite refusal messages per minute (flood protection).
 pub const MAX_REFUSALS_PER_MINUTE: usize = 30;
@@ -105,13 +86,6 @@ pub enum PairAttempt {
     RateLimited,
 }
 
-#[derive(Debug, Clone)]
-struct PendingCode {
-    code: String,
-    expires_at: Instant,
-    failed_attempts: u32,
-}
-
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct PersistedFile {
     #[serde(default = "default_version")]
@@ -140,11 +114,9 @@ const fn default_version() -> u32 {
 #[derive(Debug, Default)]
 struct StateInner {
     persisted: PersistedFile,
-    pending_codes: Vec<PendingCode>,
+    invites: PairingInvites<i64>,
     refused_at: HashMap<i64, Instant>,
     refusal_times: VecDeque<Instant>,
-    /// Per-user wrong-guess counter and optional lockout deadline.
-    pair_failures: HashMap<i64, (u32, Option<Instant>)>,
 }
 
 /// Manages paired Telegram user IDs, one-time 6-digit pairing codes, refusal
@@ -155,14 +127,6 @@ pub struct PairingStore {
     inner: Mutex<StateInner>,
     #[cfg(test)]
     fail_saves: std::sync::atomic::AtomicBool,
-}
-
-fn ct_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Uniform 6-digit code from the OS CSPRNG (via a v4 UUID), using rejection sampling.
@@ -294,17 +258,7 @@ impl PairingStore {
     pub fn create_code_with_ttl(&self, ttl: Duration) -> String {
         let code = generate_six_digit_code();
         let now = Instant::now();
-        let mut guard = self.inner.lock();
-        // Drop all older live codes; keep recently expired ones briefly so we can report
-        // `Expired` vs `InvalidCode`.
-        guard
-            .pending_codes
-            .retain(|c| c.expires_at <= now && c.expires_at + Duration::from_secs(600) > now);
-        guard.pending_codes.push(PendingCode {
-            code: code.clone(),
-            expires_at: now + ttl,
-            failed_attempts: 0,
-        });
+        self.inner.lock().invites.create(code.clone(), ttl, now);
         code
     }
 
@@ -319,62 +273,24 @@ impl PairingStore {
         let candidate = code.trim();
         let now = Instant::now();
         let mut guard = self.inner.lock();
-
-        // Per-user brute-force lockout.
-        if let Some((_, Some(until))) = guard.pair_failures.get(&user_id) {
-            if *until > now {
-                return Ok(PairAttempt::RateLimited);
+        match guard.invites.check(user_id, candidate, now) {
+            PairingMatch::Valid(ticket) => {
+                let mut candidate = guard.persisted.clone();
+                let newly_inserted = candidate.paired_users.insert(user_id);
+                self.save_locked(&candidate)?;
+                guard.persisted = candidate;
+                guard.invites.consume(&user_id, ticket);
+                guard.refused_at.remove(&user_id);
+                Ok(if newly_inserted {
+                    PairAttempt::Paired
+                } else {
+                    PairAttempt::AlreadyPaired
+                })
             }
-            guard.pair_failures.remove(&user_id);
+            PairingMatch::Expired => Ok(PairAttempt::Expired),
+            PairingMatch::InvalidCode => Ok(PairAttempt::InvalidCode),
+            PairingMatch::RateLimited => Ok(PairAttempt::RateLimited),
         }
-
-        // Compare against every pending code (no early exit on the first byte mismatch).
-        let mut matched: Option<usize> = None;
-        for (idx, pending) in guard.pending_codes.iter().enumerate() {
-            if ct_eq(&pending.code, candidate) && matched.is_none() {
-                matched = Some(idx);
-            }
-        }
-        if let Some(idx) = matched {
-            if guard.pending_codes[idx].expires_at <= now {
-                guard.pending_codes.remove(idx);
-                return Ok(PairAttempt::Expired);
-            }
-            let mut candidate = guard.persisted.clone();
-            let newly_inserted = candidate.paired_users.insert(user_id);
-            self.save_locked(&candidate)?;
-            guard.persisted = candidate;
-            guard.pending_codes.remove(idx);
-            guard.pair_failures.remove(&user_id);
-            guard.refused_at.remove(&user_id);
-            return Ok(if newly_inserted {
-                PairAttempt::Paired
-            } else {
-                PairAttempt::AlreadyPaired
-            });
-        }
-
-        // Wrong code: count it against the user and against all live codes.
-        if guard.pair_failures.len() >= MAX_TRACKED_USERS {
-            guard
-                .pair_failures
-                .retain(|_, (_, until)| until.is_some_and(|u| u > now));
-        }
-        let entry = guard.pair_failures.entry(user_id).or_insert((0, None));
-        entry.0 += 1;
-        if entry.0 >= MAX_PAIR_ATTEMPTS_PER_USER {
-            entry.1 = Some(now + PAIR_LOCKOUT);
-        }
-        for pending in &mut guard.pending_codes {
-            if pending.expires_at > now {
-                pending.failed_attempts += 1;
-            }
-        }
-        guard
-            .pending_codes
-            .retain(|c| c.failed_attempts < MAX_PAIR_ATTEMPTS);
-
-        Ok(PairAttempt::InvalidCode)
     }
 
     /// Directly mark `user_id` as paired (e.g. from initial config).

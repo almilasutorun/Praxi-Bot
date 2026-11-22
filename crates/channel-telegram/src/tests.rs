@@ -19,10 +19,10 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 use crate::{
-    ApprovalDecision, ApprovalScope, BotSummary, Channel, ChannelCaps, ChatRef, ChatSummary,
-    DaemonClient, DaemonStatus, DeliveryKind, HttpDaemonClient, IncomingKind, OutgoingMessage,
-    Result, SendOutcome, TELEGRAM_BOT_TOKEN_SECRET, TelegramChannel, TelegramConfig,
-    ThrottledEditor, Update, format_approval_callback, format_question_callback, store_bot_token,
+    ApprovalDecision, ApprovalScope, BotSummary, Channel, ChannelCaps, ChatSummary, DaemonClient,
+    DaemonStatus, DeliveryKind, HttpDaemonClient, IncomingKind, Result, SendOutcome,
+    TELEGRAM_BOT_TOKEN_SECRET, TelegramChannel, TelegramConfig, ThrottledEditor, Update,
+    format_approval_callback, format_question_callback, store_bot_token,
 };
 
 const TEST_BOT_TOKEN: &str = "123456789:AAH_test_bot_token_secret_value_xyz";
@@ -1058,19 +1058,46 @@ async fn start_polls_get_updates_and_channel_trait_works() {
     // Test Channel trait methods directly first.
     let ch = TelegramChannel::new(cfg.clone(), daemon.clone()).unwrap();
     assert_eq!(ch.capabilities(), ChannelCaps::telegram_v0());
-    let mut rx = ch.receive().await.unwrap();
-    let first = rx.next().await.expect("one update");
-    assert_eq!(first.chat, ChatRef(TEST_CHAT_ID));
-    assert_eq!(first.kind, IncomingKind::Text("/status".into()));
+    let expected = channel_api::IncomingMessage {
+        event_id: "10".into(),
+        chat: channel_api::ChatRef(TEST_CHAT_ID.to_string()),
+        sender: channel_api::SenderIdentity {
+            id: PAIRED_USER_ID.to_string(),
+            display_name: Some("tester".into()),
+        },
+        message_id: Some("100".into()),
+        kind: channel_api::IncomingKind::Text("/status".into()),
+    };
+    channel_api::conformance::assert_transport(
+        &ch as &dyn Channel,
+        &[expected],
+        channel_api::ChatRef(TEST_CHAT_ID.to_string()),
+        "query-conformance",
+    )
+    .await
+    .unwrap();
 
-    let msg_id = ch
-        .send(
-            ChatRef(TEST_CHAT_ID),
-            OutgoingMessage::text("hello from trait"),
+    assert!(matches!(
+        Channel::send(
+            &ch,
+            channel_api::ChatRef("not-a-telegram-id".into()),
+            channel_api::OutgoingMessage::text("invalid")
         )
+        .await,
+        Err(channel_api::ChannelError::InvalidInput(_))
+    ));
+    Channel::answer_callback(&ch, "redaction-check", Some(TEST_BOT_TOKEN))
         .await
         .unwrap();
-    assert_eq!(msg_id, 101);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(sent_messages(&requests)[0]["chat_id"], TEST_CHAT_ID);
+    assert_eq!(edited_messages(&requests)[0]["message_id"], 101);
+    assert!(
+        callback_answers(&requests)
+            .iter()
+            .any(|answer| answer["callback_query_id"] == "redaction-check"
+                && !answer["text"].as_str().unwrap().contains(TEST_BOT_TOKEN))
+    );
 
     // Also test `TelegramChannel::start` background loop + graceful shutdown.
     let running = TelegramChannel::start(cfg, daemon).unwrap();
