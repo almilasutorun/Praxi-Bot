@@ -1310,6 +1310,14 @@
     },
     "menu": {
       "close": "kapat",
+      "empty": "Eşleşme yok. Başka bir komut ya da bot adı dene.",
+      "groups": {
+        "app": "Çalışma alanı",
+        "bots": "Tüm botlar",
+        "chat": "Sohbet",
+        "pinned": "Sabitlenenler",
+        "recent": "Son kullanılanlar"
+      },
       "navigate": "gezin",
       "select": "seç"
     },

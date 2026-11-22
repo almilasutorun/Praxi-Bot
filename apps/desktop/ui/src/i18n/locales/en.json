@@ -1310,6 +1310,14 @@
     },
     "menu": {
       "close": "close",
+      "empty": "No matches. Try a different command or bot name.",
+      "groups": {
+        "app": "Workspace",
+        "bots": "All bots",
+        "chat": "Conversation",
+        "pinned": "Pinned",
+        "recent": "Recent"
+      },
       "navigate": "navigate",
       "select": "select"
     },

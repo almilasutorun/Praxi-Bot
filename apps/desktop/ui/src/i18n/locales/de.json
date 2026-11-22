@@ -1310,6 +1310,14 @@
     },
     "menu": {
       "close": "schließen",
+      "empty": "Keine Treffer. Versuche einen anderen Befehl oder Bot-Namen.",
+      "groups": {
+        "app": "Arbeitsbereich",
+        "bots": "Alle Bots",
+        "chat": "Unterhaltung",
+        "pinned": "Angeheftet",
+        "recent": "Zuletzt verwendet"
+      },
       "navigate": "navigieren",
       "select": "auswählen"
     },
