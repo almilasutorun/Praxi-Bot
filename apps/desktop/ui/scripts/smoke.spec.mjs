@@ -40,11 +40,21 @@ async function newSession(ctx, { onboarded }) {
   const page = await context.newPage();
   const problems = [];
   const failed = [];
+  const logoUrl = `${ctx.base}/v1/composio/logos/`;
   if (process.env.SMOKE_DEBUG) page.on('console', (m) => ctx.log(`[console.${m.type()}] ${m.text().slice(0, 1500)} @ ${m.location().url}:${m.location().lineNumber}`));
   if (process.env.SMOKE_DEBUG) page.on('requestfailed', (r) => ctx.log(`[requestfailed] ${r.url()} ${r.failure()?.errorText}`));
-  page.on('console', (m) => { if (m.type() === 'error' && !m.location().url.endsWith('/favicon.ico')) problems.push(`console: ${m.text().slice(0, 300)}`); });
+  page.on('console', (m) => {
+    const url = m.location().url;
+    if (m.type() !== 'error' || url.endsWith('/favicon.ico')) return;
+    // The offline Apps catalog can lack logo artwork. The tile supplies a fallback.
+    if (url.startsWith(logoUrl) && m.text().includes('status of 404')) return;
+    problems.push(`console: ${m.text().slice(0, 300)}`);
+  });
   page.on('pageerror', (e) => problems.push(`pageerror: ${String(e).slice(0, 300)}`));
-  page.on('response', (r) => { if (r.status() >= 400 && r.url().includes('/v1/')) failed.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
+  page.on('response', (r) => {
+    if (r.status() === 404 && r.url().startsWith(logoUrl)) return;
+    if (r.status() >= 400 && r.url().includes('/v1/')) failed.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`);
+  });
   page.on('response', (r) => { if (r.status() >= 500 && r.url().includes('/v1/')) problems.push(`HTTP ${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
   return { context, page, problems, failed };
 }
@@ -126,7 +136,8 @@ export async function flows(ctx) {
     await page.getByTestId('fr-connected').waitFor({ timeout: 60000 });
     if (!(await page.getByTestId('fr-model').textContent())?.trim()) throw new Error('no model chosen after connecting');
     await page.getByTestId('fr-next').click();
-    await page.getByTestId('fr-level-balanced').waitFor(T);
+    // Ask keeps the file write approval covered below. Balanced allows workspace edits.
+    await page.getByTestId('fr-level-ask').click();
     await page.getByTestId('fr-next').click();
     await page.getByTestId('new-bot-name').fill('Atlas');
     await page.getByTestId('fr-next').click();
@@ -168,6 +179,7 @@ export async function flows(ctx) {
   await run(s, 'create a second bot from the New-bot modal', async (page) => {
     await page.getByRole('button', { name: /new bot/i }).first().click();
     await page.getByTestId('new-bot-name').fill('Nova');
+    await page.getByTestId('autonomy-ask').click();
     await page.getByTestId('new-bot-submit').click();
     await page.getByTestId('bot-empty-state').waitFor(T);
   });
@@ -404,12 +416,13 @@ export async function flows(ctx) {
   const openCount = () => ctx.stubLog.filter((l) => l === 'MODEL_OPEN').length;
   const abortCount = () => ctx.stubLog.filter((l) => l === 'MODEL_ABORTED').length;
   /** Press Stop, then within 3 s: run cancelled in the daemon, UI out of the running state, composer usable. */
-  const stopAndCheck = async (page, before, { appearWithin = 15000 } = {}) => {
+  const stopAndCheck = async (page, before, { appearWithin = 15000, afterClick } = {}) => {
     // The send button is the Stop button (a rounded square) while the bot works and the box is empty.
     const stopBtn = page.locator('[data-testid="send-button"][data-mode="stop"]');
     await stopBtn.waitFor({ timeout: appearWithin });
-    const t0 = Date.now();
     await stopBtn.click();
+    await afterClick?.();
+    const t0 = Date.now();
     await until('run reaches "cancelled" in the daemon', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id && r.state === 'cancelled'), STOP_WITHIN);
     await page.getByTestId('run-status').waitFor({ state: 'hidden', timeout: Math.max(STOP_WITHIN - (Date.now() - t0), 500) });
     if (await stopBtn.isVisible()) throw new Error('the Stop button is still shown after the run stopped');
@@ -442,9 +455,12 @@ export async function flows(ctx) {
     const quote = (path) => `'${path.replaceAll("'", windows ? "''" : "'\"'\"'")}'`;
     const command = `${windows ? '&' : 'exec'} ${[process.execPath, holdScript, pidFile].map(quote).join(' ')}`;
     await sendLines(page, [`call:shell_run ${JSON.stringify({ command })}`, `call:shell_run ${JSON.stringify({ command: 'echo must-not-run' })}`]);
-    // Launching a program requires approval even at Full. Stop must kill it after it actually starts.
-    await cards(page).getByRole('button', { name: /^allow once$/i }).click();
-    const pid = await until('hold process started', () => (existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0), 60000);
+    // Depending on the chat's prior grant, the fixture command can start or ask first.
+    const allow = cards(page).getByRole('button', { name: /^allow once$/i });
+    const readPid = () => existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : 0;
+    const started = await until('hold process starts or asks for approval', async () => readPid() || await allow.isVisible(), 60000);
+    if (started === true) await allow.click();
+    const pid = typeof started === 'number' ? started : await until('hold process started', readPid, 60000);
     await stopAndCheck(page, before);
     await until('hold process gone', () => !alive(pid), STOP_WITHIN);
     await new Promise((r) => setTimeout(r, 1000));
@@ -463,11 +479,30 @@ export async function flows(ctx) {
   await run(s, 'Stop (d): pressed right after Send, before the first event, still stops the run', async (page) => {
     await gotoBot(page, 'Fulla');
     const before = new Set((await runsNow()).map((r) => r.id));
-    const c = composer(page);
-    await c.fill('slow:60000');
-    await c.press('Enter');
-    // No waiting for any event: the Stop control must already be there and must work.
-    await stopAndCheck(page, before, { appearWithin: 1500 });
+    const sendUrl = `${ctx.base}/v1/chats/*/messages`;
+    const release = Promise.withResolvers();
+    const holdSend = async (route) => {
+      if (route.request().method() === 'POST') await release.promise;
+      await route.fallback();
+    };
+    // Hold the real send request until the click so this always tests Stop before the first run event.
+    await page.route(sendUrl, holdSend);
+    try {
+      const c = composer(page);
+      await c.fill('slow:60000');
+      await c.press('Enter');
+      await stopAndCheck(page, before, {
+        appearWithin: 1500,
+        afterClick: async () => {
+          release.resolve();
+          // A pre-send Stop can be applied only once the daemon has registered the held request.
+          await until('the daemon registers the held send', async () => (await runsNow()).find((r) => !before.has(r.id) && !r.parent_run_id), 15000);
+        }
+      });
+    } finally {
+      release.resolve();
+      await page.unroute(sendUrl, holdSend);
+    }
     await new Promise((r) => setTimeout(r, 1000));
     const live = (await runsNow()).filter((r) => !before.has(r.id) && !isTerminal(r.state));
     if (live.length) throw new Error(`a run is still live after Stop: ${live.map((r) => r.state).join(',')}`);
