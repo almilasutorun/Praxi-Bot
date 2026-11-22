@@ -22,7 +22,8 @@ Later layers override earlier ones by name:
    `<data dir>/skills/` folder is the published/shared layer.
 
 Bundled skills today: `cookie-consent-banners`, `custom-dropdowns`,
-`date-pickers`, `github-basics`, `shadow-dom-and-iframes`,
+`date-pickers`, `github-basics`, `linux-file-upload-dialog`,
+`shadow-dom-and-iframes`, `sign-in-forms`, `web-tables-and-spreadsheets`,
 `windows-file-upload-dialog`, `windows-settings-navigation`.
 
 ## Write one

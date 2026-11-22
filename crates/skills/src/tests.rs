@@ -148,9 +148,37 @@ fn bundled_skills_all_valid() {
     let idx = SkillIndex::load(SkillPaths::default());
     assert!(idx.issues().is_empty(), "{:?}", idx.issues());
     let names: Vec<_> = idx.list().into_iter().map(|s| s.name).collect();
-    assert_eq!(names.len(), 7);
-    assert!(names.contains(&"github-basics".to_string()));
-    drop(tmp);
+    assert_eq!(names.len(), 10);
+    for expected in [
+        "github-basics",
+        "sign-in-forms",
+        "linux-file-upload-dialog",
+        "web-tables-and-spreadsheets",
+    ] {
+        assert!(names.contains(&expected.to_string()), "missing {expected}");
+    }
+    let block = idx.prompt_block(&SkillContext::default());
+    assert!(block.len() <= PROMPT_BUDGET_BYTES, "{}", block.len());
+    for (dir_name, content) in bundled::BUNDLED {
+        if matches!(
+            *dir_name,
+            "sign-in-forms" | "linux-file-upload-dialog" | "web-tables-and-spreadsheets"
+        ) {
+            put(tmp.path(), dir_name, content);
+            let report = hub::scan_dir(&tmp.path().join(dir_name)).unwrap();
+            assert_eq!(
+                report.risk(),
+                hub::RiskLevel::Low,
+                "{dir_name}: {:?}",
+                report.findings
+            );
+            assert!(
+                report.findings.is_empty(),
+                "{dir_name}: {:?}",
+                report.findings
+            );
+        }
+    }
 }
 
 #[test]

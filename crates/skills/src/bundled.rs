@@ -30,4 +30,16 @@ pub(crate) const BUNDLED: &[(&str, &str)] = &[
         "windows-settings-navigation",
         include_str!("../../../skills/windows-settings-navigation/SKILL.md"),
     ),
+    (
+        "sign-in-forms",
+        include_str!("../../../skills/sign-in-forms/SKILL.md"),
+    ),
+    (
+        "linux-file-upload-dialog",
+        include_str!("../../../skills/linux-file-upload-dialog/SKILL.md"),
+    ),
+    (
+        "web-tables-and-spreadsheets",
+        include_str!("../../../skills/web-tables-and-spreadsheets/SKILL.md"),
+    ),
 ];
