@@ -1843,6 +1843,7 @@
     "show": "Bildschirm anzeigen",
     "sideBot": "Vom Bot",
     "sideMine": "Von mir",
+    "stalled": "Seit einem Moment kommt kein neues Bild…",
     "status": {
       "local": "{{system}} · der Bot arbeitet hier",
       "localNoSystem": "Der Bot arbeitet hier",
@@ -3090,6 +3091,15 @@
       "title": "Bot pausiert, wartet auf dich"
     },
     "privacyNotice": "Bildschirmpixel lassen sich nicht schwärzen (können Passwörter oder OTPs zeigen); dieser Stream bleibt nur im Arbeitsspeicher und wird nie an Modellanbieter gesendet.",
+    "quality": {
+      "auto": "Automatisch",
+      "autoHint": "Scharf und automatisch leichter, wenn dieser Computer oder die Verbindung nicht mithält",
+      "high": "Hoch",
+      "highHint": "Größtes und schärfstes Bild (bis 1920×1080), verbraucht am meisten Daten",
+      "label": "Bildqualität",
+      "saver": "Datensparen",
+      "saverHint": "Kleineres Bild, verbraucht am wenigsten Daten"
+    },
     "queryFailed": "Die Bildschirmliste konnte nicht geladen werden. Es wird automatisch erneut versucht.",
     "reacquireAction": "Kontrolle erneut übernehmen",
     "reasons": {

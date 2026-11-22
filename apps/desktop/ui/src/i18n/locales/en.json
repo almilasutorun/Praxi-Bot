@@ -1843,6 +1843,7 @@
     "show": "Show screen",
     "sideBot": "Bot's",
     "sideMine": "Mine",
+    "stalled": "No new picture for a moment…",
     "status": {
       "local": "{{system}} · the bot works here",
       "localNoSystem": "The bot works here",
@@ -3090,6 +3091,15 @@
       "title": "Bot paused, waiting for you"
     },
     "privacyNotice": "Screen pixels cannot be redacted (may show passwords or OTPs); this stream stays in memory only and is never sent to model providers.",
+    "quality": {
+      "auto": "Auto",
+      "autoHint": "Sharp, and lighter automatically when this computer or the connection cannot keep up",
+      "high": "High",
+      "highHint": "Largest and sharpest picture (up to 1920×1080), uses the most data",
+      "label": "Picture quality",
+      "saver": "Data saver",
+      "saverHint": "Smaller picture, uses the least data"
+    },
     "queryFailed": "Could not load the screen list. It is retried automatically.",
     "reacquireAction": "Reacquire control",
     "reasons": {

@@ -1843,6 +1843,7 @@
     "show": "Ekranı göster",
     "sideBot": "Botun",
     "sideMine": "Benim",
+    "stalled": "Bir süredir yeni görüntü gelmedi…",
     "status": {
       "local": "{{system}} · bot burada çalışıyor",
       "localNoSystem": "Bot burada çalışıyor",
@@ -3090,6 +3091,15 @@
       "title": "Bot duraklatıldı, seni bekliyor"
     },
     "privacyNotice": "Ekran pikselleri maskelenemez (parola/OTP içerebilir); bu akış yalnızca bellekte tutulur ve model sağlayıcılarına gönderilmez.",
+    "quality": {
+      "auto": "Otomatik",
+      "autoHint": "Net görüntü; bilgisayar veya bağlantı yetişemezse kendiliğinden hafifler",
+      "high": "Yüksek",
+      "highHint": "En büyük ve en net görüntü (1920×1080’e kadar), en çok veriyi kullanır",
+      "label": "Görüntü kalitesi",
+      "saver": "Veri tasarrufu",
+      "saverHint": "Daha küçük görüntü, en az veri kullanır"
+    },
     "queryFailed": "Ekran listesi yüklenemedi. Otomatik olarak yeniden denenecek.",
     "reacquireAction": "Kontrolü yeniden devral",
     "reasons": {
