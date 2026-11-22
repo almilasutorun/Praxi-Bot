@@ -58,6 +58,7 @@ mod provider_models;
 mod secret_request_routes;
 pub mod trusted_folders;
 pub use peer::{PeerIdentity, PeerRole, peer_router};
+mod bot_limits_routes;
 mod routes;
 mod schedule;
 mod schedule_tools;
@@ -1262,6 +1263,11 @@ fn api_routes() -> Router<AppState> {
         .route(
             "/v1/bots/{id}/skills",
             get(skills::get_bot_skills).put(skills::put_bot_skills),
+        )
+        .route(
+            "/v1/bots/{id}/spend-limits",
+            get(bot_limits_routes::get_bot_spend_limits)
+                .put(bot_limits_routes::put_bot_spend_limits),
         )
         .route(
             "/v1/skills",

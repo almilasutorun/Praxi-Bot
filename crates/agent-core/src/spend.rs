@@ -41,6 +41,8 @@ pub(crate) struct SpendState {
     /// when a call ends, so without this N parallel calls could all pass at 99%.
     /// Process-wide, so it may over-count across users: that only errs safe.
     pub reserved: Mutex<Reserved>,
+    /// Per-bot limits state (see `bot_limits.rs`).
+    pub bot: crate::bot_limits::BotLimitState,
 }
 
 /// In-flight reservations: the USD sum and how many calls hold one. The count

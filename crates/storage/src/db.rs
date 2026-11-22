@@ -492,6 +492,7 @@ impl Storage {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let bid = id.to_string();
         tx.execute("DELETE FROM bot_skill_assignment WHERE bot_id = ?1", [&bid])?;
+        tx.execute("DELETE FROM bot_spend_limits WHERE bot_id = ?1", [&bid])?;
         let n = tx.execute("DELETE FROM bots WHERE id = ?1", [&bid])?;
         if n > 0 {
             cleanup()?;
@@ -1769,6 +1770,77 @@ impl Storage {
             params![user_id.to_string(), since_ms],
             |row| Ok((row.get::<_, f64>(0)?, row.get::<_, i64>(1)?.max(0) as u64)),
         )?)
+    }
+
+    /// Per-bot usage since `since_ms` from the usage ledger: `(usd, tokens, unreported_calls)`.
+    ///
+    /// Counting rules (ADR-0034): a call with a recorded `cost_usd` adds that
+    /// cost; a call whose tokens were never reported adds the conservative
+    /// estimate stored at call start (`limit_estimate_usd` / `limit_estimate_tokens`),
+    /// so missing provider data cannot make spending free. A call with tokens
+    /// but no known price adds tokens only. Subagent runs belong to their bot.
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn bot_usage_since(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        since_ms: i64,
+    ) -> Result<(f64, u64, u64)> {
+        Ok(self.conn().query_row(
+            "SELECT                COALESCE(SUM(CASE                  WHEN json_type(a.detail_json, '$.cost_usd') IN ('real','integer') THEN MAX(json_extract(a.detail_json, '$.cost_usd'), 0.0)                  WHEN json_type(a.detail_json, '$.tokens') = 'object' THEN 0.0                  ELSE COALESCE(MAX(json_extract(a.detail_json, '$.limit_estimate_usd'), 0.0), 0.0) END), 0.0),                COALESCE(SUM(CASE                  WHEN json_type(a.detail_json, '$.tokens') = 'object' THEN MAX(COALESCE(json_extract(a.detail_json, '$.prompt_tokens'), 0), 0) + MAX(COALESCE(json_extract(a.detail_json, '$.completion_tokens'), 0), 0)                  ELSE MAX(COALESCE(json_extract(a.detail_json, '$.limit_estimate_tokens'), 0), 0) END), 0),                COALESCE(SUM(CASE WHEN json_type(a.detail_json, '$.tokens') = 'object' THEN 0 ELSE 1 END), 0)              FROM audit_log a JOIN runs r ON r.id = a.run_id              WHERE a.user_id = ?1 AND r.bot_id = ?2 AND a.action = 'usage' AND a.ts_ms >= ?3                AND json_extract(a.detail_json, '$.ledger_version') = 1",
+            params![user_id.to_string(), bot_id.to_string(), since_ms],
+            |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                    row.get::<_, i64>(2)?.max(0) as u64,
+                ))
+            },
+        )?)
+    }
+
+    /// The stored limits JSON of a bot; `None` when no row exists (defaults apply).
+    ///
+    /// # Errors
+    /// Fails on a database error.
+    pub fn get_bot_spend_limits(&self, bot_id: BotId) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT limits_json FROM bot_spend_limits WHERE bot_id = ?1",
+                [bot_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Replace a bot's limits JSON and write the audit entry in ONE transaction,
+    /// so a change can never exist without its audit record.
+    ///
+    /// # Errors
+    /// Fails on a database error (including an unknown bot).
+    pub fn set_bot_spend_limits(
+        &self,
+        user_id: UserId,
+        bot_id: BotId,
+        limits_json: &str,
+        audit_detail: &Value,
+    ) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT INTO bot_spend_limits (bot_id, user_id, limits_json, updated_at_ms) VALUES (?1, ?2, ?3, ?4)              ON CONFLICT(bot_id) DO UPDATE SET limits_json = excluded.limits_json, updated_at_ms = excluded.updated_at_ms",
+            params![bot_id.to_string(), user_id.to_string(), limits_json, now_ms()],
+        )?;
+        tx.execute(
+            "INSERT INTO audit_log (user_id, run_id, actor, action, detail_json, ts_ms) VALUES (?1, NULL, 'owner', 'bot.spend_limits_changed', ?2, ?3)",
+            params![user_id.to_string(), serde_json::to_string(audit_detail)?, now_ms()],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Largest `prompt_tokens` any usage row of one run recorded.

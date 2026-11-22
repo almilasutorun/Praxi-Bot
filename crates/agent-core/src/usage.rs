@@ -396,6 +396,161 @@ fn warn_is_new(sh: &Arc<Shared>, ctx: &RunCtx, month: i64, limit: f64) -> bool {
     !already
 }
 
+/// Per-bot limits (`bot_limits.rs`): refuse a call that would break a hard
+/// limit, notify at 80% / 100%. Returns the reservation held while the call is
+/// in flight plus the estimates to record in the ledger row (so a call whose
+/// provider reports no usage still counts).
+///
+/// Fails closed: an unreadable limit or ledger blocks the call.
+fn check_bot_limits(
+    sh: &Arc<Shared>,
+    ctx: &RunCtx,
+    model: &str,
+) -> Result<Option<(crate::bot_limits::Reservation, f64, u64)>, String> {
+    use crate::bot_limits::{
+        BOT_LIMIT_REACHED, Metric, Period, PeriodLimit, Reservation, crossed_alerts,
+        estimate_tokens, find_breach, load_limits, period_usage,
+    };
+    let unavailable = |what: &str| {
+        format!(
+            "[{BOT_LIMIT_REACHED} period=unknown metric=unknown resets_ms=0] Bot spending limits \
+             could not be checked ({what}), so the model was not called."
+        )
+    };
+    let limits = load_limits(&sh.storage, ctx.bot_id).map_err(|e| unavailable(&e))?;
+    if !limits.any() {
+        return Ok(None);
+    }
+    let now = storage::now_ms();
+    let price = sh.price_for(model);
+    let prompt_seen = sh
+        .storage
+        .max_run_prompt_tokens(ctx.user_id, ctx.run_id)
+        .ok()
+        .flatten();
+    let (prompt_est, completion_est) = estimate_tokens(prompt_seen, sh.cfg.max_tokens);
+    let est_tokens = prompt_est.saturating_add(completion_est);
+    let est_usd = price.map(|p| p.cost(prompt_est, completion_est, None));
+
+    // Held across check and reservation so parallel calls cannot all pass.
+    let mut map = sh.spend.bot.reserved.lock();
+    let mut usage = Vec::new();
+    for p in Period::ALL {
+        if *limits.period(p) == PeriodLimit::default() {
+            continue;
+        }
+        let u = period_usage(&sh.storage, ctx.user_id, ctx.bot_id, p, now)
+            .map_err(|_| unavailable("usage ledger unavailable"))?;
+        usage.push((p, u));
+    }
+    let reserved = map.get(&ctx.bot_id).copied().unwrap_or_default();
+    if let Some(b) = find_breach(&limits, &usage, reserved, est_usd, est_tokens) {
+        drop(map);
+        let (used, limit) = if b.metric == Metric::Usd {
+            (format!("${:.2}", b.used), format!("${:.2}", b.limit))
+        } else {
+            (
+                format!("{:.0} tokens", b.used),
+                format!("{:.0} tokens", b.limit),
+            )
+        };
+        let _ = sh.audit_usage_record(
+            ctx.user_id,
+            ctx.run_id,
+            "bot_limit.blocked",
+            &json!({
+                "bot_id": ctx.bot_id.to_string(), "period": b.period.as_str(),
+                "metric": b.metric.as_str(), "limit": b.limit, "used": b.used,
+                "model": model, "resets_ms": b.resets_ms,
+            }),
+        );
+        return Err(format!(
+            "[{BOT_LIMIT_REACHED} period={} metric={} resets_ms={}] This bot's {} limit of \
+             {limit} is used up or would be exceeded by the next call ({used} used or in \
+             flight). The model was not called. Raise the limit in the bot's settings, wait \
+             until it resets, or stop here.",
+            b.period.as_str(),
+            b.metric.as_str(),
+            b.resets_ms,
+            b.period.as_str(),
+        ));
+    }
+    let entry = map.entry(ctx.bot_id).or_default();
+    entry.usd += est_usd.unwrap_or(0.0);
+    entry.tokens = entry.tokens.saturating_add(est_tokens);
+    entry.calls += 1;
+    drop(map);
+    for a in crossed_alerts(&limits, &usage) {
+        bot_alert(sh, ctx, &a);
+    }
+    Ok(Some((
+        Reservation {
+            bot: ctx.bot_id,
+            usd: est_usd.unwrap_or(0.0),
+            tokens: est_tokens,
+        },
+        est_usd.unwrap_or(0.0),
+        est_tokens,
+    )))
+}
+
+/// Issue one bot-limit notification at most once per period, bot, measure,
+/// level and limit value (raising the limit re-arms it). The in-memory set is
+/// the fast path; the durable marker is the `bot_limit.alert` audit row, so a
+/// restart does not repeat the notification.
+fn bot_alert(sh: &Arc<Shared>, ctx: &RunCtx, a: &crate::bot_limits::Alert) {
+    use crate::bot_limits::{BOT_LIMIT_WARNING, Metric};
+    let key = format!(
+        "{}|{}|{}|{}|{}|{}",
+        ctx.bot_id,
+        a.period.as_str(),
+        a.metric.as_str(),
+        a.level,
+        a.base,
+        a.start_ms
+    );
+    if !sh.spend.bot.alerted.lock().insert(key.clone()) {
+        return;
+    }
+    let durable = sh
+        .storage
+        .list_audit_action_since(ctx.user_id, "bot_limit.alert", a.start_ms)
+        .is_ok_and(|rows| rows.iter().any(|r| r.detail["key"].as_str() == Some(&key)));
+    if durable {
+        return;
+    }
+    let _ = sh.audit_usage_record(
+        ctx.user_id,
+        ctx.run_id,
+        "bot_limit.alert",
+        &json!({
+            "key": key, "bot_id": ctx.bot_id.to_string(), "period": a.period.as_str(),
+            "metric": a.metric.as_str(), "level": a.level, "limit": a.base,
+        }),
+    );
+    let amount = if a.metric == Metric::Usd {
+        format!("${:.2}", a.base)
+    } else {
+        format!("{:.0} tokens", a.base)
+    };
+    sh.emit(
+        ctx,
+        Event::Error(RunError {
+            run_id: ctx.run_id,
+            message: format!(
+                "[{BOT_LIMIT_WARNING} period={} metric={} level={}] This bot used {}% of its {} \
+                 limit of {amount}.",
+                a.period.as_str(),
+                a.metric.as_str(),
+                a.level,
+                a.level,
+                a.period.as_str(),
+            ),
+            recoverable: true,
+        }),
+    );
+}
+
 fn release_reservation(sh: &Shared, amount: f64) {
     sh.spend.reserved.lock().release(amount);
 }
@@ -409,6 +564,8 @@ pub(crate) struct CallGuard {
     started: Instant,
     /// Spend-limit estimate held while the call is in flight.
     reserved_usd: f64,
+    /// Per-bot limit estimate held while the call is in flight.
+    bot_reservation: Option<crate::bot_limits::Reservation>,
 }
 
 impl CallGuard {
@@ -435,12 +592,26 @@ impl CallGuard {
             "tokens": null, "prompt_tokens": null, "completion_tokens": null,
             "cached_tokens": null, "cost_usd": null,
         });
-        let reserved_usd = check_spend_limit(sh, ctx, model)?;
+        let mut detail = detail;
+        let bot_reservation = check_bot_limits(sh, ctx, model)?.map(|(r, usd, tokens)| {
+            // What the call counts as when the provider reports no usage.
+            detail["limit_estimate_usd"] = json!(usd);
+            detail["limit_estimate_tokens"] = json!(tokens);
+            r
+        });
+        let reserved_usd = match check_spend_limit(sh, ctx, model) {
+            Ok(v) => v,
+            Err(e) => {
+                sh.spend.bot.release(bot_reservation);
+                return Err(e);
+            }
+        };
         if sh
             .audit_usage_record(ctx.user_id, ctx.run_id, "llm.call_started", &detail)
             .is_err()
         {
             release_reservation(sh, reserved_usd);
+            sh.spend.bot.release(bot_reservation);
             return Err("usage ledger unavailable".to_owned());
         }
         Ok(Self {
@@ -450,6 +621,7 @@ impl CallGuard {
             detail,
             started: Instant::now(),
             reserved_usd,
+            bot_reservation,
         })
     }
 
@@ -494,6 +666,7 @@ impl Drop for CallGuard {
         // Settled: the ledger row now carries the real cost (released after the
         // write, so the estimate is never missing from both).
         release_reservation(&self.sh, self.reserved_usd);
+        self.sh.spend.bot.release(self.bot_reservation);
     }
 }
 

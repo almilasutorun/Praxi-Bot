@@ -2980,6 +2980,120 @@
         ]
       }
     },
+    "/v1/bots/{id}/spend-limits": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "A bot's spending limits and what each period has used.",
+        "operationId": "get_bot_spend_limits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSpendLimitsDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Replace a bot's spending limits (owner only). Effective for the next model\ncall of every run of the bot, including scheduled and channel-triggered ones.\nThe change is audited as `bot.spend_limits_changed`.",
+        "operationId": "put_bot_spend_limits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Bot id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutBotSpendLimitsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotSpendLimitsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/v1/channels": {
       "get": {
         "tags": [
@@ -13123,6 +13237,48 @@
           }
         }
       },
+      "BotLimitUsageDto": {
+        "type": "object",
+        "description": "Usage of the three periods.",
+        "required": [
+          "daily",
+          "weekly",
+          "monthly"
+        ],
+        "properties": {
+          "daily": {
+            "$ref": "#/components/schemas/PeriodUsageDto",
+            "description": "Today."
+          },
+          "monthly": {
+            "$ref": "#/components/schemas/PeriodUsageDto",
+            "description": "This month."
+          },
+          "weekly": {
+            "$ref": "#/components/schemas/PeriodUsageDto",
+            "description": "This week."
+          }
+        }
+      },
+      "BotLimitsDto": {
+        "type": "object",
+        "description": "Daily, weekly and monthly limits of one bot.",
+        "properties": {
+          "daily": {
+            "$ref": "#/components/schemas/PeriodLimitDto",
+            "description": "Per local calendar day."
+          },
+          "monthly": {
+            "$ref": "#/components/schemas/PeriodLimitDto",
+            "description": "Per local calendar month."
+          },
+          "weekly": {
+            "$ref": "#/components/schemas/PeriodLimitDto",
+            "description": "Per local calendar week (Monday start)."
+          }
+        },
+        "additionalProperties": false
+      },
       "BotPatchInput": {
         "type": "object",
         "description": "`PATCH /v1/bots/{id}`: change only the listed fields of a bot, atomically.\nEvery field not named - including unknown keys - stays exactly as stored.",
@@ -13221,6 +13377,48 @@
             "format": "int64",
             "description": "Version of the stored assignment (`0` when none). Send it back as\n`expected_version` on `PUT` so a stale dialog gets `409` instead of\noverwriting a newer assignment.",
             "minimum": 0
+          }
+        }
+      },
+      "BotSpendLimitsDto": {
+        "type": "object",
+        "description": "A bot's limits, their usage and the default applied to bots that were never configured.",
+        "required": [
+          "limits",
+          "is_default",
+          "usage",
+          "default_daily_hard_usd",
+          "default_daily_hard_tokens",
+          "now_ms"
+        ],
+        "properties": {
+          "default_daily_hard_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Daily hard cap of a bot that was never configured (tokens).",
+            "minimum": 0
+          },
+          "default_daily_hard_usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Daily hard cap of a bot that was never configured (USD)."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "`true` while the bot has no saved limits and the safe default applies."
+          },
+          "limits": {
+            "$ref": "#/components/schemas/BotLimitsDto",
+            "description": "The limits in force."
+          },
+          "now_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Now, as the daemon sees it (ms since epoch)."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/BotLimitUsageDto",
+            "description": "What each period has used."
           }
         }
       },
@@ -20337,6 +20535,87 @@
           }
         }
       },
+      "PeriodLimitDto": {
+        "type": "object",
+        "description": "Limits of one period. `null` = not set. Soft limits notify at 80% and 100%;\nhard limits stop model calls before they happen.",
+        "properties": {
+          "hard_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stop model calls beyond this many tokens.",
+            "minimum": 0
+          },
+          "hard_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Stop model calls beyond this amount (USD, 0.01 to 1,000,000)."
+          },
+          "soft_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Notify at 80% and 100% of this many tokens.",
+            "minimum": 0
+          },
+          "soft_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Notify at 80% and 100% of this amount (USD, 0.01 to 1,000,000)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PeriodUsageDto": {
+        "type": "object",
+        "description": "What one period has used so far.",
+        "required": [
+          "start_ms",
+          "resets_ms",
+          "usd",
+          "tokens",
+          "unreported_calls"
+        ],
+        "properties": {
+          "resets_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the counter resets (ms since epoch)."
+          },
+          "start_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Period start (ms since epoch)."
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tokens counted in the period.",
+            "minimum": 0
+          },
+          "unreported_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Calls whose provider reported no usage; counted by a conservative estimate.",
+            "minimum": 0
+          },
+          "usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Money counted in the period (USD). Models without a known price add nothing here."
+          }
+        }
+      },
       "PointerPhase": {
         "type": "string",
         "enum": [
@@ -20547,6 +20826,20 @@
             "description": "Skill names to assign when `mode == \"selected\"` (max 200)."
           }
         }
+      },
+      "PutBotSpendLimitsInput": {
+        "type": "object",
+        "description": "`PUT /v1/bots/{id}/spend-limits`.",
+        "required": [
+          "limits"
+        ],
+        "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/BotLimitsDto",
+            "description": "The new limits; every field left `null` is unlimited. Replaces all previous values."
+          }
+        },
+        "additionalProperties": false
       },
       "Reason": {
         "type": "string",

@@ -8,6 +8,7 @@ use axum::Json;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use crate::bot_limits_routes;
 use crate::changes;
 use crate::cli_login;
 use crate::components;
@@ -310,6 +311,8 @@ impl Modify for Security {
         voice_routes::get_voice,
         voice_routes::transcribe,
         voice_routes::update_voice,
+        bot_limits_routes::get_bot_spend_limits,
+        bot_limits_routes::put_bot_spend_limits,
         spend_routes::get_spend_limit,
         spend_routes::put_spend_limit,
         web_routes::get_web_search,
@@ -592,6 +595,12 @@ impl Modify for Security {
         voice::TranscribeOutput,
         voice::VoiceConfigDto,
         voice::VoiceConfigInput,
+        bot_limits_routes::BotLimitUsageDto,
+        bot_limits_routes::BotLimitsDto,
+        bot_limits_routes::BotSpendLimitsDto,
+        bot_limits_routes::PeriodLimitDto,
+        bot_limits_routes::PeriodUsageDto,
+        bot_limits_routes::PutBotSpendLimitsInput,
         spend_routes::SpendLimitDto,
         spend_routes::SpendLimitInput,
         web::WebSearchConfigDto,

@@ -62,6 +62,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0019_chat_search",
         include_str!("../migrations/0019_chat_search.sql"),
     ),
+    (
+        "0020_bot_spend_limits",
+        include_str!("../migrations/0020_bot_spend_limits.sql"),
+    ),
 ];
 
 /// Highest schema version this build supports.
@@ -174,9 +178,9 @@ mod tests {
     fn migrates_empty_db_and_is_idempotent() {
         let mut conn = Connection::open_in_memory().unwrap();
         assert_eq!(current_version(&conn).unwrap(), 0);
-        assert_eq!(latest_version(), 19);
-        assert_eq!(migrate(&mut conn).unwrap(), 14);
-        assert_eq!(current_version(&conn).unwrap(), 19);
+        assert_eq!(latest_version(), 20);
+        assert_eq!(migrate(&mut conn).unwrap(), 15);
+        assert_eq!(current_version(&conn).unwrap(), 20);
         assert_eq!(migrate(&mut conn).unwrap(), 0);
         assert_eq!(
             tables(&conn),
@@ -185,6 +189,7 @@ mod tests {
                 "audit_log",
                 "bot_skill_assignment",
                 "bot_skill_assignment_state",
+                "bot_spend_limits",
                 "bots",
                 "chat_messages_fts",
                 "chat_messages_fts_config",
@@ -234,8 +239,8 @@ mod tests {
     fn fresh_database_ends_at_latest_version() {
         let mut conn = Connection::open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
-        assert_eq!(latest_version(), 19);
-        assert_eq!(current_version(&conn).unwrap(), 19);
+        assert_eq!(latest_version(), 20);
+        assert_eq!(current_version(&conn).unwrap(), 20);
         assert_eq!(MIGRATIONS[5].0, "0006_bot_skill_assignment");
         assert_eq!(MIGRATIONS[6].0, "0007_message_exposure");
         assert_eq!(MIGRATIONS[7].0, "0013_bot_version");
@@ -267,8 +272,8 @@ mod tests {
                 .iter()
                 .any(|t| t.starts_with("bot_skill_assignment"))
         );
-        assert_eq!(migrate(&mut conn).unwrap(), 9);
-        assert_eq!(current_version(&conn).unwrap(), 19);
+        assert_eq!(migrate(&mut conn).unwrap(), 10);
+        assert_eq!(current_version(&conn).unwrap(), 20);
         // An existing bot starts at version 1.
         let v: i64 = conn
             .query_row("SELECT version FROM bots WHERE id='bot'", [], |r| r.get(0))
@@ -312,7 +317,7 @@ mod tests {
         without_exposure.push(MIGRATIONS[7]);
         assert_eq!(migrate_list(&mut conn, &without_exposure).unwrap(), 7);
         assert_eq!(current_version(&conn).unwrap(), 13);
-        assert_eq!(migrate(&mut conn).unwrap(), 7);
+        assert_eq!(migrate(&mut conn).unwrap(), 8);
         conn.prepare("SELECT exposure_untrusted,exposure_private,exposure_sources FROM messages")
             .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), 0);
