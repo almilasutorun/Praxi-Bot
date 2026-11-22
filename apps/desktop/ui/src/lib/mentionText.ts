@@ -1,3 +1,4 @@
+import { fold } from "./fuzzy.ts";
 import { mentionHandle } from "./slash.ts";
 
 export interface MentionPart {
@@ -9,7 +10,7 @@ export interface MentionPart {
 /** Split a message into plain text and `@Name` parts of known bots (case-insensitive, longest handle first). */
 export function splitMentions(text: string, bots: ReadonlyArray<{ name: string; color?: string }>): MentionPart[] {
   const known = bots
-    .map((b) => ({ handle: mentionHandle(b.name).toLowerCase(), color: b.color }))
+    .map((b) => ({ handle: fold(mentionHandle(b.name)), color: b.color }))
     .filter((b) => b.handle !== "" && b.color)
     .sort((a, b) => b.handle.length - a.handle.length);
   if (known.length === 0 || !text.includes("@")) return [{ text }];
@@ -19,7 +20,7 @@ export function splitMentions(text: string, bots: ReadonlyArray<{ name: string; 
   while (i < text.length) {
     const prev = i === 0 ? " " : (text[i - 1] ?? " ");
     if (text[i] === "@" && /[\s([{]/.test(prev)) {
-      const rest = text.slice(i + 1).toLowerCase();
+      const rest = fold(text.slice(i + 1));
       const hit = known.find(
         (b) => rest.startsWith(b.handle) && !/[\p{L}\p{N}_-]/u.test(rest.charAt(b.handle.length))
       );

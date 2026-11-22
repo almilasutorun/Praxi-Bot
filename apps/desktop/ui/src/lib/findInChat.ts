@@ -3,6 +3,8 @@
  * CSS Custom Highlight API, so Markdown rendering, selection and copy keep working. The matching
  * itself works on plain strings (one per text node) so it can be tested without a DOM.
  */
+import { fold } from "./fuzzy.ts";
+
 export interface TextMatch {
   /** Index into the list of texts. */
   node: number;
@@ -10,19 +12,17 @@ export interface TextMatch {
   end: number;
 }
 
-/** Case-insensitive, non-overlapping matches of `query` in each text. An empty query matches nothing. */
+/** Case- and diacritic-insensitive, non-overlapping matches of `query` in each text. An empty query matches nothing. */
 export function findMatches(texts: readonly string[], query: string): TextMatch[] {
-  const needle = query.trim().toLocaleLowerCase();
+  const needle = fold(query.trim());
   if (!needle) {
     return [];
   }
   const out: TextMatch[] = [];
   texts.forEach((text, node) => {
-    const hay = text.toLocaleLowerCase();
-    // lowercasing can change the length for a few scripts: skip those nodes rather than mis-highlight
-    if (hay.length !== text.length) {
-      return;
-    }
+    // `fold` keeps the length, so every index points into the original text (no node is skipped
+    // for containing "İ"); it also ignores diacritics and the Turkish dotless i, like the palette.
+    const hay = fold(text);
     let from = 0;
     for (;;) {
       const at = hay.indexOf(needle, from);
