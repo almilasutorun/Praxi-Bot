@@ -817,7 +817,7 @@ function AppShell() {
       style={{ "--size-sidebar-width": `${railWidth}px` } as CSSProperties}
       backdrop={
         wallpaperKind ? (
-          <Wallpaper kind={wallpaperKind} />
+          <Wallpaper kind={wallpaperKind} motion={settings.wallpaperMotion} />
         ) : settings.backdrop !== NO_BACKDROP && settings.backdrop !== CUSTOM_BACKDROP ? (
           <Backdrop
             scene={settings.backdrop}
