@@ -133,8 +133,29 @@ export function parseInline(s: string, depth = 0): Inline[] {
       continue;
     }
     if (c === "*" && s[i + 1] === "*" && !isSpace(s[i + 2])) {
-      const end = s.indexOf("**", i + 2);
+      let end = s.indexOf("**", i + 2);
+      // `***both***`: the closing run is three stars; take the last two so the inner `*x*` is italic
+      if (s[i + 2] === "*" && end > i + 2) {
+        while (s[end + 2] === "*") {
+          end++;
+        }
+      }
       if (end > i + 2 && !isSpace(s[end - 1])) {
+        flush();
+        out.push({ t: "strong", children: nest(s.slice(i + 2, end)) });
+        i = end + 2;
+        continue;
+      }
+    }
+    if (c === "_" && s[i + 1] === "_" && !isSpace(s[i + 2]) && !isAlnum(s[i - 1])) {
+      // `__strong__`: like `**`, but never inside a word (`snake__case__name` stays as typed)
+      let end = s.indexOf("__", i + 2);
+      if (s[i + 2] === "_" && end > i + 2) {
+        while (s[end + 2] === "_") {
+          end++;
+        }
+      }
+      if (end > i + 2 && !isSpace(s[end - 1]) && !isAlnum(s[end + 2])) {
         flush();
         out.push({ t: "strong", children: nest(s.slice(i + 2, end)) });
         i = end + 2;
@@ -247,7 +268,8 @@ export function parseInline(s: string, depth = 0): Inline[] {
 // ------------------------------------------------------------------ blocks
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)[^`]*$/;
-const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+// the optional closing run of `#` must follow a space ("## C#" keeps its #; "## Title ##" loses them)
+const HEADING = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
 const HR = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const TABLE_DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;

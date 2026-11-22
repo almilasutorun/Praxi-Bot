@@ -173,3 +173,36 @@ test("pathological nesting terminates", () => {
   assert.ok(parseInline("*".repeat(5000)).length > 0);
   assert.ok(parseInline("[".repeat(3000)).length > 0);
 });
+
+test("a heading keeps a trailing # that is part of the word, and drops a closing run", () => {
+  const text = (src: string) => {
+    const h = parseMarkdown(src)[0];
+    assert.equal(h?.t, "heading");
+    return h && h.t === "heading" ? h.children : [];
+  };
+  assert.deepEqual(text("## Learning C#"), [{ t: "text", text: "Learning C#" }]);
+  assert.deepEqual(text("# F# and C#"), [{ t: "text", text: "F# and C#" }]);
+  assert.deepEqual(text("## Title ##"), [{ t: "text", text: "Title" }]);
+  assert.deepEqual(text("### Title   ###   "), [{ t: "text", text: "Title" }]);
+});
+
+test("***both*** is bold italic, not bold with stray stars", () => {
+  assert.deepEqual(parseInline("***Önemli:*** dikkat"), [
+    { t: "strong", children: [{ t: "em", children: [{ t: "text", text: "Önemli:" }] }] },
+    { t: "text", text: " dikkat" }
+  ]);
+  // an uneven closing run is unchanged: **bold** followed by a literal star
+  assert.deepEqual(parseInline("a **b***"), [
+    { t: "text", text: "a " },
+    { t: "strong", children: [{ t: "text", text: "b" }] },
+    { t: "text", text: "*" }
+  ]);
+});
+
+test("__strong__ is bold, but never inside a word", () => {
+  assert.deepEqual(parseInline("__bold__ text"), [
+    { t: "strong", children: [{ t: "text", text: "bold" }] },
+    { t: "text", text: " text" }
+  ]);
+  assert.deepEqual(parseInline("snake__case__name"), [{ t: "text", text: "snake__case__name" }]);
+});
